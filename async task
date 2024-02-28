@@ -1,0 +1,126 @@
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Service;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+
+@RestController
+@RequestMapping("/your-endpoint")
+public class YourController {
+
+    @Autowired
+    private LongRunningTaskService longRunningTaskService;
+
+    @PostMapping("/runtests")
+    public ResponseEntity<String> runTests() {
+        CompletableFuture<String> runningTask = longRunningTaskService.asyncTask();
+        String taskId = extractTaskIdFromCompletableFuture(runningTask);
+        return ResponseEntity.ok("Long-running task with ID " + taskId + " has started. Check status using /taskstatus endpoint.");
+    }
+
+    @GetMapping("/taskstatus/{taskId}")
+    public ResponseEntity<String> getTaskStatus(@PathVariable String taskId) {
+        LongRunningTaskService.TaskStatus status = longRunningTaskService.getTaskStatus(taskId);
+
+        switch (status) {
+            case IN_PROGRESS:
+                // Check if the task has exceeded the timeout (5 hours)
+                if (longRunningTaskService.hasTaskTimedOut(taskId, 5, TimeUnit.HOURS)) {
+                    longRunningTaskService.updateTaskStatus(taskId, LongRunningTaskService.TaskStatus.TIMEOUT);
+                    return ResponseEntity.status(HttpStatus.REQUEST_TIMEOUT).body("Task with ID " + taskId + " has timed out!");
+                }
+                return ResponseEntity.ok("Task with ID " + taskId + " is in progress...");
+            case COMPLETED:
+                return ResponseEntity.ok("Task with ID " + taskId + " has completed!");
+            case FAILED:
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Task with ID " + taskId + " has failed!");
+            case TIMEOUT:
+                return ResponseEntity.status(HttpStatus.REQUEST_TIMEOUT).body("Task with ID " + taskId + " has timed out!");
+            case NOT_FOUND:
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Task with ID " + taskId + " not found.");
+            default:
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Unknown task status for ID " + taskId);
+        }
+    }
+
+    private String extractTaskIdFromCompletableFuture(CompletableFuture<String> completableFuture) {
+        // Extract the task ID from the CompletableFuture's identityHashCode
+        return Integer.toHexString(System.identityHashCode(completableFuture));
+    }
+}
+
+@Service
+class LongRunningTaskService {
+
+    private static final Map<String, TaskStatusWrapper> taskStatusMap = new HashMap<>();
+
+    @Async
+    public CompletableFuture<String> asyncTask() {
+        String taskId = UUID.randomUUID().toString();
+        taskStatusMap.put(taskId, new TaskStatusWrapper(TaskStatus.IN_PROGRESS));
+
+        try {
+            // Simulating a long-running task
+            Thread.sleep(6 * 3600000); // 6 hours (exceeds the 5-hour timeout)
+
+            // If the task completes within the time limit, update the status
+            updateTaskStatus(taskId, TaskStatus.COMPLETED);
+            return CompletableFuture.completedFuture("Long-running task completed!");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            // If the task fails, update the status
+            updateTaskStatus(taskId, TaskStatus.FAILED);
+            return CompletableFuture.completedFuture("Long-running task failed!");
+        }
+    }
+
+    public TaskStatus getTaskStatus(String taskId) {
+        return taskStatusMap.getOrDefault(taskId, new TaskStatusWrapper(TaskStatus.NOT_FOUND)).getStatus();
+    }
+
+    public void updateTaskStatus(String taskId, TaskStatus status) {
+        taskStatusMap.computeIfPresent(taskId, (id, wrapper) -> {
+            wrapper.setStatus(status);
+            return wrapper;
+        });
+    }
+
+    public boolean hasTaskTimedOut(String taskId, long timeout, TimeUnit timeUnit) {
+        TaskStatusWrapper wrapper = taskStatusMap.get(taskId);
+        return wrapper != null && wrapper.hasTimedOut(timeout, timeUnit);
+    }
+
+    public enum TaskStatus {
+        IN_PROGRESS,
+        COMPLETED,
+        FAILED,
+        TIMEOUT,
+        NOT_FOUND
+    }
+
+    private static class TaskStatusWrapper {
+        private final TaskStatus status;
+        private final long startTime;
+
+        public TaskStatusWrapper(TaskStatus status) {
+            this.status = status;
+            this.startTime = System.currentTimeMillis();
+        }
+
+        public TaskStatus getStatus() {
+            return status;
+        }
+
+        public boolean hasTimedOut(long timeout, TimeUnit timeUnit) {
+            long elapsedTime = System.currentTimeMillis() - startTime;
+            return elapsedTime > timeUnit.toMillis(timeout);
+        }
+    }
+}
