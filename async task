@@ -21,7 +21,7 @@ public class YourController {
     @PostMapping("/runtests")
     public ResponseEntity<String> runTests() {
         CompletableFuture<String> runningTask = longRunningTaskService.asyncTask();
-        String taskId = extractTaskIdFromCompletableFuture(runningTask);
+        String taskId = runningTask.join(); // Obtain the actual UUID from the CompletableFuture
         return ResponseEntity.ok("Long-running task with ID " + taskId + " has started. Check status using /taskstatus endpoint.");
     }
 
@@ -49,11 +49,6 @@ public class YourController {
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Unknown task status for ID " + taskId);
         }
     }
-
-    private String extractTaskIdFromCompletableFuture(CompletableFuture<String> completableFuture) {
-        // Extract the task ID from the CompletableFuture's identityHashCode
-        return Integer.toHexString(System.identityHashCode(completableFuture));
-    }
 }
 
 @Service
@@ -72,12 +67,12 @@ class LongRunningTaskService {
 
             // If the task completes within the time limit, update the status
             updateTaskStatus(taskId, TaskStatus.COMPLETED);
-            return CompletableFuture.completedFuture("Long-running task completed!");
+            return CompletableFuture.completedFuture(taskId);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             // If the task fails, update the status
             updateTaskStatus(taskId, TaskStatus.FAILED);
-            return CompletableFuture.completedFuture("Long-running task failed!");
+            return CompletableFuture.completedFuture(taskId);
         }
     }
 
@@ -106,7 +101,7 @@ class LongRunningTaskService {
     }
 
     private static class TaskStatusWrapper {
-        private final TaskStatus status;
+        private TaskStatus status;
         private final long startTime;
 
         public TaskStatusWrapper(TaskStatus status) {
@@ -116,6 +111,10 @@ class LongRunningTaskService {
 
         public TaskStatus getStatus() {
             return status;
+        }
+
+        public void setStatus(TaskStatus status) {
+            this.status = status;
         }
 
         public boolean hasTimedOut(long timeout, TimeUnit timeUnit) {
