@@ -1,0 +1,346 @@
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+
+const Runner = () => {
+  const [testType, setTestType] = useState('UI');
+  const [cucumberTags, setCucumberTags] = useState('');
+  const [threadCount, setThreadCount] = useState(1);
+  const [environment, setEnvironment] = useState('QA');
+  const [target, setTarget] = useState('Local');
+  const [platform, setPlatform] = useState('');
+  const [platformVersion, setPlatformVersion] = useState('');
+  const [browser, setBrowser] = useState('');
+  const [browserVersion, setBrowserVersion] = useState('');
+  const [deviceName, setDeviceName] = useState('');
+  const [realDevice, setRealDevice] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [testData, setTestData] = useState([]);
+
+  useEffect(() => {
+    const fetchTestData = async () => {
+      try {
+        const response = await axios.get('http://localhost:8080/api/getTestData');
+        setTestData(response.data);
+      } catch (error) {
+        console.error('Error fetching test data:', error);
+      }
+    };
+
+    fetchTestData();
+  }, []);
+
+  const handleRun = async () => {
+    setIsRunning(true);
+    setIsCompleted(false);
+    setProgress(0);
+
+    const requestData = {
+      cucumberTag: cucumberTags,
+      threadCount,
+      buildName: '238',
+      testType: testType.toLowerCase(),
+      browser: browser.toLowerCase(),
+      isRemote: target === 'SauceLabs',
+      environment: environment.toLowerCase(),
+    };
+
+    try {
+      // Call setenv API
+      await axios.post('/setenv', requestData);
+
+      // Call runtests API
+      const response = await axios.post('/api/v1/runner/runtests');
+      const { jobId, status } = response.data;
+
+      if (status === 'INPROGRESS') {
+        console.log('Test execution started...');
+        await checkJobStatus(jobId);
+      }
+
+      setIsRunning(false);
+      setIsCompleted(true);
+      console.log('Test execution completed.');
+    } catch (error) {
+      console.error('Error:', error);
+      setIsRunning(false);
+    }
+  };
+
+  const checkJobStatus = (jobId) => {
+    return new Promise((resolve) => {
+      let progressInterval = setInterval(async () => {
+        try {
+          const response = await axios.get(`/api/v1/runner/status/${jobId}`);
+          const { status } = response.data;
+
+          if (status === 'COMPLETED') {
+            clearInterval(progressInterval);
+            resolve();
+          }
+        } catch (error) {
+          clearInterval(progressInterval);
+          console.error('Error:', error);
+          resolve();
+        }
+      }, 1000);
+    });
+  };
+
+  const handleReset = () => {
+    setTestType('UI');
+    setCucumberTags('');
+    setThreadCount(1);
+    setEnvironment('QA');
+    setTarget('Local');
+    setPlatform('');
+    setPlatformVersion('');
+    setBrowser('');
+    setBrowserVersion('');
+    setDeviceName('');
+    setRealDevice(false);
+    setIsRunning(false);
+    setIsCompleted(false);
+    setProgress(0);
+  };
+
+  const filteredPlatforms = [...new Set(testData.map(item => item.platform))];
+
+  const filteredPlatformVersions = [...new Set(testData.filter(item => item.platform === platform).map(item => item.platformVersion))];
+
+  const filteredBrowsers = [...new Set(testData.filter(item => item.platform === platform).map(item => item.browser).filter(Boolean))];
+
+  const filteredBrowserVersions = [...new Set(testData.filter(item => item.platform === platform && item.browser === browser).map(item => item.browserVersion))];
+
+  const filteredDeviceNames = [...new Set(testData.filter(item => item.platform === platform).map(item => item.deviceName).filter(Boolean))];
+
+  return (
+    <div className="p-6 max-w-8xl mx-auto flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4 border border-gray-300 rounded">
+      {/* Form Section */}
+      <div className="md:w-2/3 p-4 rounded">
+        <form className="space-y-4">
+     
+
+        <div className="flex items-center">
+            <label className="w-1/3 text-lg font-medium">Test Type:</label>
+            <div className="flex items-center space-x-6">
+              <label className="flex items-center">
+                <input type="radio" value="UI" checked={testType === 'UI'} onChange={() => setTestType('UI')} />
+                <span className="ml-2">UI</span>
+              </label>
+              <label className="flex items-center">
+                <input type="radio" value="API" checked={testType === 'API'} onChange={() => setTestType('API')} />
+                <span className="ml-2">API</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="flex items-center">
+            <label className="w-1/3 text-lg font-medium">Cucumber Tags:</label>
+            <input
+              type="text"
+              value={cucumberTags}
+              onChange={(e) => setCucumberTags(e.target.value)}
+              className="w-2/3 p-2 border rounded"
+            />
+          </div>
+
+          <div className="flex items-center">
+            <label className="w-1/3 text-lg font-medium">Thread Count:</label>
+            <select
+              value={threadCount}
+              onChange={(e) => setThreadCount(Number(e.target.value))}
+              className="w-2/3 p-2 border rounded"
+            >
+              {[...Array(10).keys()].map((_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  {i + 1}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center">
+            <label className="w-1/3 text-lg font-medium">Environment:</label>
+            <div className="flex items-center space-x-6">
+              <label className="flex items-center">
+                <input
+                  type="radio"
+                  value="QA"
+                  checked={environment === 'QA'}
+                  onChange={() => setEnvironment('QA')}
+                />
+                <span className="ml-2">QA</span>
+              </label>
+              <label className="flex items-center">
+                <input
+                  type="radio"
+                  value="UAT"
+                  checked={environment === 'UAT'}
+                  onChange={() => setEnvironment('UAT')}
+                />
+                <span className="ml-2">UAT</span>
+              </label>
+              <label className="flex items-center">
+                <input
+                  type="radio"
+                  value="DEV"
+                  checked={environment === 'DEV'}
+                  onChange={() => setEnvironment('DEV')}
+                />
+                <span className="ml-2">DEV</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="flex items-center">
+            <label className="w-1/3 text-lg font-medium">Target:</label>
+            <div className="flex items-center space-x-6">
+              <label className="flex items-center">
+                <input
+                  type="radio"
+                  value="Local"
+                  checked={target === 'Local'}
+                  onChange={() => setTarget('Local')}
+                />
+                <span className="ml-2">Local</span>
+              </label>
+              <label className="flex items-center">
+                <input
+                  type="radio"
+                  value="SauceLabs"
+                  checked={target === 'SauceLabs'}
+                  onChange={() => setTarget('SauceLabs')}
+                />
+                <span className="ml-2">SauceLabs</span>
+              </label>
+              <label className="flex items-center">
+                <input
+                  type="radio"
+                  value="Inhouse Grid"
+                  checked={target === 'Inhouse Grid'}
+                  onChange={() => setTarget('Inhouse Grid')}
+                />
+                <span className="ml-2">Inhouse Grid</span>
+              </label>
+            </div>
+          </div>
+          
+          
+          {target === 'SauceLabs' && (
+            <>
+              <div className="flex items-center">
+                <label className="w-1/3 text-lg font-medium">Platform:</label>
+                <select
+                  value={platform}
+                  onChange={(e) => setPlatform(e.target.value)}
+                  className="w-1/2 p-2 border rounded"
+                >
+                  <option value="">Select Platform</option>
+                  {filteredPlatforms.map(platform => (
+                    <option key={platform} value={platform}>{platform}</option>
+                  ))}
+                </select>
+                <select
+                  value={platformVersion}
+                  onChange={(e) => setPlatformVersion(e.target.value)}
+                  className="w-1/2 p-2 border rounded"
+                >
+                  <option value="">Select Version</option>
+                  {filteredPlatformVersions.map(version => (
+                    <option key={version} value={version}>{version}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center">
+                <label className="w-1/3 text-lg font-medium">Browser:</label>
+                <select
+                  value={browser}
+                  onChange={(e) => setBrowser(e.target.value)}
+                  className="w-1/2 p-2 border rounded"
+                >
+                  <option value="">Select Browser</option>
+                  {filteredBrowsers.map(browser => (
+                    <option key={browser} value={browser}>{browser}</option>
+                  ))}
+                </select>
+                <select
+                  value={browserVersion}
+                  onChange={(e) => setBrowserVersion(e.target.value)}
+                  className="w-1/2 p-2 border rounded"
+                >
+                  <option value="">Select Version</option>
+                  {filteredBrowserVersions.map(version => (
+                    <option key={version} value={version}>{version}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center">
+                <label className="w-1/3 text-lg font-medium">Device Name:</label>
+                <select
+                  value={deviceName}
+                  onChange={(e) => setDeviceName(e.target.value)}
+                  className="w-2/3 p-2 border rounded"
+                >
+                  <option value="">Select Device</option>
+                  {filteredDeviceNames.map(device => (
+                    <option key={device} value={device}>{device}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center">
+                <label className="w-1/3 text-lg font-medium">Real Device?</label>
+                <select
+                  value={realDevice}
+                  onChange={(e) => setRealDevice(e.target.value)}
+                  className="w-2/3 p-2 border rounded"
+                >
+                  <option value={false}>False</option>
+                  <option value={true}>True</option>
+                </select>
+              </div>
+            </>
+          )}
+
+          {/* Add the Run and Reset buttons */}
+          <div className="flex items-center space-x-4">
+            <button
+              type="button"
+              onClick={handleRun}
+              className={`px-4 py-2 rounded ${isRunning ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-500 text-white'}`}
+              disabled={isRunning}
+            >
+              Run
+            </button>
+            <button
+              type="button"
+              onClick={handleReset}
+              className="px-4 py-2 bg-red-500 text-white rounded"
+              disabled={isRunning || isCompleted}
+            >
+              Reset
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* Progress Section */}
+      <div className="md:w-1/3 p-4 rounded bg-gray-100">
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold mb-2">Execution Progress</h2>
+          <div className="w-full bg-gray-300 rounded">
+            <div className="bg-blue-500 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-l" style={{ width: `${progress}%` }}>
+              {progress}%
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Runner;
