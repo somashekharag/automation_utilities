@@ -1,0 +1,84 @@
+package com.example.splunkservice;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
+
+import java.util.Map;
+
+@Service
+public class SplunkService {
+
+    @Value("${splunk.url}")
+    private String splunkUrl;
+
+    @Value("${splunk.token}")
+    private String splunkToken;
+
+    private final RestTemplate restTemplate;
+
+    public SplunkService(RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
+    }
+
+    public String searchLogs(String index, String query) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(splunkToken);
+        headers.set("Content-Type", "application/x-www-form-urlencoded");
+
+        String body = "search=search index=" + index + " " + query;
+        HttpEntity<String> request = new HttpEntity<>(body, headers);
+
+        UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromHttpUrl(splunkUrl);
+        ResponseEntity<Map> response = restTemplate.exchange(uriBuilder.toUriString(), HttpMethod.POST, request, Map.class);
+
+        Map<String, Object> responseBody = response.getBody();
+        String sid = (String) responseBody.get("sid");
+
+        // Polling to get the results
+        String resultsUrl = splunkUrl + "/" + sid + "/results";
+        HttpEntity<String> resultsRequest = new HttpEntity<>(headers);
+
+        // Poll until the job is complete (you can add a delay or check job status)
+        try {
+            Thread.sleep(5000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        ResponseEntity<String> resultsResponse = restTemplate.exchange(resultsUrl, HttpMethod.GET, resultsRequest, String.class);
+        return resultsResponse.getBody();
+      
+    }
+}
+====================
+
+package com.example.splunkcontroller;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import com.example.splunkservice.SplunkService;
+
+@RestController
+public class SplunkController {
+
+    private final SplunkService splunkService;
+
+    public SplunkController(SplunkService splunkService) {
+        this.splunkService = splunkService;
+    }
+
+    @GetMapping("/search")
+    public String searchLogs(@RequestParam String index, @RequestParam String query) {
+        return splunkService.searchLogs(index, query);
+    }
+}
+=====
+
+http://localhost:8080/search?index=your-index-name&query=your-splunk-query
