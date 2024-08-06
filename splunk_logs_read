@@ -1,15 +1,13 @@
 package com.example.splunkservice;
 
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.ResponseEntity;
-import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriComponentsBuilder;
+package com.example.splunkservice;
 
-import java.util.Map;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
 
 @Service
 public class SplunkService {
@@ -20,42 +18,72 @@ public class SplunkService {
     @Value("${splunk.token}")
     private String splunkToken;
 
-    private final RestTemplate restTemplate;
+    public String checkConnectivity() {
+        // Example search query
+        String searchQuery = "index=_internal | head 10";
 
-    public SplunkService(RestTemplate restTemplate) {
-        this.restTemplate = restTemplate;
-    }
+        // Construct the initial curl command
+        String initialCurlCommand = String.format(
+                "curl -k -H \"Authorization: Bearer %s\" %s/services/search/jobs -d search=\"%s\" -d earliest_time=\"-15m\" -d latest_time=\"now\"",
+                splunkToken, splunkUrl, searchQuery
+        );
 
-    public String searchLogs(String index, String query) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(splunkToken);
-        headers.set("Content-Type", "application/x-www-form-urlencoded");
+        ProcessBuilder initialProcessBuilder = new ProcessBuilder("bash", "-c", initialCurlCommand);
+        String sid = null;
 
-        String body = "search=search index=" + index + " " + query;
-        HttpEntity<String> request = new HttpEntity<>(body, headers);
-
-        UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromHttpUrl(splunkUrl);
-        ResponseEntity<Map> response = restTemplate.exchange(uriBuilder.toUriString(), HttpMethod.POST, request, Map.class);
-
-        Map<String, Object> responseBody = response.getBody();
-        String sid = (String) responseBody.get("sid");
-
-        // Polling to get the results
-        String resultsUrl = splunkUrl + "/" + sid + "/results";
-        HttpEntity<String> resultsRequest = new HttpEntity<>(headers);
-
-        // Poll until the job is complete (you can add a delay or check job status)
         try {
-            Thread.sleep(5000);
-        } catch (InterruptedException e) {
+            Process initialProcess = initialProcessBuilder.start();
+            BufferedReader initialReader = new BufferedReader(new InputStreamReader(initialProcess.getInputStream()));
+            StringBuilder initialOutput = new StringBuilder();
+            String line;
+            while ((line = initialReader.readLine()) != null) {
+                initialOutput.append(line).append("\n");
+            }
+            int exitCode = initialProcess.waitFor();
+            if (exitCode == 0) {
+                // Parse the sid from the response (you might need to adjust the parsing based on the actual response format)
+                String response = initialOutput.toString();
+                sid = response.substring(response.indexOf("<sid>") + 5, response.indexOf("</sid>"));
+            } else {
+                return "Initial Search Failed. Exit Code: " + exitCode;
+            }
+        } catch (IOException | InterruptedException e) {
             Thread.currentThread().interrupt();
+            return "Error during initial search: " + e.getMessage();
         }
 
-        ResponseEntity<String> resultsResponse = restTemplate.exchange(resultsUrl, HttpMethod.GET, resultsRequest, String.class);
-        return resultsResponse.getBody();
-      
+        if (sid == null) {
+            return "No SID found in the initial search response.";
+        }
+
+        // Construct the results curl command with output_mode=json
+        String resultsCurlCommand = String.format(
+                "curl -k -H \"Authorization: Bearer %s\" %s/services/search/jobs/%s/results?output_mode=json",
+                splunkToken, splunkUrl, sid
+        );
+
+        ProcessBuilder resultsProcessBuilder = new ProcessBuilder("bash", "-c", resultsCurlCommand);
+
+        try {
+            Process resultsProcess = resultsProcessBuilder.start();
+            BufferedReader resultsReader = new BufferedReader(new InputStreamReader(resultsProcess.getInputStream()));
+            StringBuilder resultsOutput = new StringBuilder();
+            while ((line = resultsReader.readLine()) != null) {
+                resultsOutput.append(line).append("\n");
+            }
+            int exitCode = resultsProcess.waitFor();
+            if (exitCode == 0) {
+                return "Search Results:\n" + resultsOutput.toString();
+            } else {
+                return "Fetching Results Failed. Exit Code: " + exitCode;
+            }
+        } catch (IOException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "Error during fetching results: " + e.getMessage();
+        }
     }
 }
+
 ====================
 
 package com.example.splunkcontroller;
