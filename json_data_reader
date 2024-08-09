@@ -1,0 +1,99 @@
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+public class CustomerDataReader {
+
+    private static final String JSON_FILE_PATH = "src/main/resources/customer_data.json";
+
+    private List<JsonNode> customers;
+
+    public CustomerDataReader() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        try {
+            JsonNode rootNode = objectMapper.readTree(new File(JSON_FILE_PATH));
+            customers = objectMapper.convertValue(rootNode.get("customers"), new TypeReference<List<JsonNode>>() {});
+        } catch (IOException e) {
+            e.printStackTrace();
+            throw new RuntimeException("Failed to load customer data from JSON file.");
+        }
+    }
+
+    public Map<String, String> getCustomerDetails(String applicationFlow, String functionalCategory, String subCategory) {
+        Optional<JsonNode> customerNode = customers.stream()
+                .filter(node -> node.get("applicationFlow").asText().equals(applicationFlow))
+                .filter(node -> node.get("functionalCategory").asText().equals(functionalCategory))
+                .filter(node -> node.get("subCategory").asText().equals(subCategory))
+                .findFirst();
+
+        if (customerNode.isPresent()) {
+            return new ObjectMapper().convertValue(customerNode.get().get("details"), new TypeReference<Map<String, String>>() {});
+        } else {
+            throw new RuntimeException("No matching customer data found for the given parameters.");
+        }
+    }
+
+    public static void main(String[] args) {
+        CustomerDataReader reader = new CustomerDataReader();
+        Map<String, String> customerDetails = reader.getCustomerDetails("loanApplication", "personalLoan", "salaryAccount");
+
+        // Print out the customer details
+        customerDetails.forEach((key, value) -> System.out.println(key + ": " + value));
+    }
+}
+
+
+==============================sample json data-------------
+
+{
+  "customers": [
+    {
+      "applicationFlow": "loanApplication",
+      "functionalCategory": "personalLoan",
+      "subCategory": "salaryAccount",
+      "details": {
+        "firstname": "John",
+        "lastname": "Doe",
+        "email": "john.doe@example.com",
+        "dob": "1990-01-01",
+        "employmentStatus": "Employed",
+        "annualIncome": "50000",
+        "loanAmount": "10000"
+      }
+    },
+    {
+      "applicationFlow": "loanApplication",
+      "functionalCategory": "personalLoan",
+      "subCategory": "selfEmployed",
+      "details": {
+        "firstname": "Jane",
+        "lastname": "Smith",
+        "email": "jane.smith@example.com",
+        "dob": "1985-05-15",
+        "businessType": "Retail",
+        "annualTurnover": "100000",
+        "loanAmount": "20000"
+      }
+    },
+    {
+      "applicationFlow": "loanApplication",
+      "functionalCategory": "homeLoan",
+      "subCategory": "firstTimeBuyer",
+      "details": {
+        "firstname": "Alice",
+        "lastname": "Brown",
+        "email": "alice.brown@example.com",
+        "dob": "1988-07-20",
+        "propertyValue": "300000",
+        "downPayment": "50000",
+        "loanAmount": "250000"
+      }
+    }
+  ]
+}
