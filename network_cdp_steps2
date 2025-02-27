@@ -1,0 +1,38 @@
+import io.cucumber.java.en.Given;
+import io.cucumber.java.en.Then;
+import org.openqa.selenium.chrome.ChromeDriver;
+import static org.junit.Assert.*;
+
+public class NetworkSteps {
+
+    @Given("I start network interception")
+    public void iStartNetworkInterception() {
+        ChromeDriver driver = new ChromeDriver();
+        ITInterceptor.getInstance().initialize(driver);
+    }
+
+    @Given("I intercept requests for endpoint {string}")
+    public void iInterceptRequestsForEndpoint(String endpoint) {
+        ITInterceptor.getInstance().setFilteredEndpoint(endpoint);
+    }
+
+    @Then("I extract value from response using JSONPath {string} and store it with key {string}")
+    public void iExtractValueFromResponseUsingJsonPath(String jsonPath, String key) {
+        String responseBody = ITInterceptor.getInstance().getResponseBody();
+        assertNotNull("No response body found!", responseBody);
+        String value = JsonPath.read(responseBody, jsonPath);
+        ITInterceptor.getInstance().storeResponseData(key, value);
+    }
+
+    @Then("I verify stored value with key {string} equals {string}")
+    public void iVerifyStoredValueWithKeyEquals(String key, String expectedValue) {
+        String actualValue = ITInterceptor.getInstance().getStoredValue(key);
+        assertNotNull("No value found for key: " + key, actualValue);
+        assertEquals("Stored value does not match expected!", expectedValue, actualValue);
+    }
+
+    @Given("I clear network logs")
+    public void iClearNetworkLogs() {
+        ITInterceptor.getInstance().clearLogs();
+    }
+}
