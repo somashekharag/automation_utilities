@@ -1,0 +1,71 @@
+import org.openqa.selenium.devtools.DevTools;
+import org.openqa.selenium.devtools.v117.network.Network;
+import org.openqa.selenium.devtools.v117.network.model.Request;
+import org.openqa.selenium.devtools.v117.network.model.Response;
+import org.openqa.selenium.chrome.ChromeDriver;
+
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+
+public class ITInterceptor {
+    private static ITInterceptor instance;
+    private DevTools devTools;
+    private String filteredEndpoint = "";  // Default: No filtering
+    private final ConcurrentMap<String, Request> requestMap = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Response> responseMap = new ConcurrentHashMap<>();
+
+    private ITInterceptor(ChromeDriver driver) {
+        this.devTools = driver.getDevTools();
+        devTools.createSession();
+
+        // Enable network tracking
+        devTools.send(Network.enable(Optional.empty(), Optional.empty(), Optional.empty()));
+
+        // Capture only filtered requests
+        devTools.addListener(Network.requestWillBeSent(), request -> {
+            if (filteredEndpoint.isEmpty() || request.getRequest().getUrl().contains(filteredEndpoint)) {
+                requestMap.put(request.getRequestId().toString(), request.getRequest());
+                System.out.println("[Filtered Request Captured] URL: " + request.getRequest().getUrl());
+            }
+        });
+
+        // Capture only filtered responses
+        devTools.addListener(Network.responseReceived(), response -> {
+            if (filteredEndpoint.isEmpty() || response.getResponse().getUrl().contains(filteredEndpoint)) {
+                responseMap.put(response.getRequestId().toString(), response.getResponse());
+                System.out.println("[Filtered Response Captured] URL: " + response.getResponse().getUrl());
+            }
+        });
+    }
+
+    public static void createNewInstance(ChromeDriver driver) {
+        instance = new ITInterceptor(driver);
+    }
+
+    public static ITInterceptor getInstance() {
+        if (instance == null) {
+            throw new IllegalStateException("Interceptor not initialized. Call createNewInstance() first.");
+        }
+        return instance;
+    }
+
+    public void setFilteredEndpoint(String endpoint) {
+        this.filteredEndpoint = endpoint;
+        System.out.println("[Interceptor] Now filtering requests for: " + endpoint);
+    }
+
+    public ConcurrentMap<String, Request> getRequestMap() {
+        return requestMap;
+    }
+
+    public ConcurrentMap<String, Response> getResponseMap() {
+        return responseMap;
+    }
+
+    public void clearLogs() {
+        requestMap.clear();
+        responseMap.clear();
+        System.out.println("[Interceptor] Logs cleared!");
+    }
+}
