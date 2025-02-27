@@ -1,0 +1,80 @@
+import com.jayway.jsonpath.JsonPath;
+import org.openqa.selenium.devtools.DevTools;
+import org.openqa.selenium.devtools.v117.network.Network;
+import org.openqa.selenium.devtools.v117.network.model.*;
+import org.openqa.selenium.chrome.ChromeDriver;
+
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class ITInterceptor {
+    private static final ThreadLocal<ITInterceptor> instance = ThreadLocal.withInitial(ITInterceptor::new);
+    private DevTools devTools;
+    private String filteredEndpoint;
+    private final Map<String, Request> requestMap = new ConcurrentHashMap<>();
+    private final Map<String, Response> responseMap = new ConcurrentHashMap<>();
+    private final ThreadLocal<Map<String, String>> runtimeData = ThreadLocal.withInitial(HashMap::new);
+
+    private ITInterceptor() {}
+
+    public void initialize(ChromeDriver driver) {
+        devTools = driver.getDevTools();
+        devTools.createSession();
+        devTools.send(Network.enable(Optional.empty(), Optional.empty(), Optional.empty()));
+
+        // Intercept requests
+        devTools.addListener(Network.requestWillBeSent(), request -> {
+            if (filteredEndpoint != null && request.getRequest().getUrl().contains(filteredEndpoint)) {
+                requestMap.put(request.getRequestId().toString(), request.getRequest());
+            }
+        });
+
+        // Intercept responses
+        devTools.addListener(Network.responseReceived(), response -> {
+            if (filteredEndpoint != null && requestMap.containsKey(response.getRequestId().toString())) {
+                responseMap.put(response.getRequestId().toString(), response.getResponse());
+
+                // Fetch response body and store JSONPath values
+                devTools.send(Network.getResponseBody(response.getRequestId())).ifPresent(body -> {
+                    String responseBody = body.getBody();
+                    storeResponseData("responseBody", responseBody); // Store complete response body
+                });
+            }
+        });
+    }
+
+    public static ITInterceptor getInstance() {
+        return instance.get();
+    }
+
+    public void setFilteredEndpoint(String endpoint) {
+        this.filteredEndpoint = endpoint;
+        clearLogs();
+    }
+
+    public Request getFilteredRequest() {
+        return requestMap.values().stream().findFirst().orElse(null);
+    }
+
+    public Response getFilteredResponse() {
+        return responseMap.values().stream().findFirst().orElse(null);
+    }
+
+    public String getResponseBody() {
+        return runtimeData.get().get("responseBody");
+    }
+
+    public void storeResponseData(String key, String value) {
+        runtimeData.get().put(key, value);
+    }
+
+    public String getStoredValue(String key) {
+        return runtimeData.get().get(key);
+    }
+
+    public void clearLogs() {
+        requestMap.clear();
+        responseMap.clear();
+        runtimeData.get().clear();
+    }
+}
