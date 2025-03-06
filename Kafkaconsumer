@@ -1,0 +1,91 @@
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import java.time.Duration;
+import java.util.Collections;
+import java.util.Properties;
+
+public class KafkaConsumerUtil {
+
+    private KafkaConsumer<String, String> consumer;
+
+    public KafkaConsumerUtil(String bootstrapServers, String topic, String groupId,
+                             String truststorePath, String truststorePassword,
+                             String keystorePath, String keystorePassword,
+                             String saslMechanism, String securityProtocol, String jaasConfig) {
+        Properties props = new Properties();
+        props.put("bootstrap.servers", bootstrapServers);
+        props.put("group.id", groupId);
+        props.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+        props.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+        props.put("auto.offset.reset", "earliest"); // Read from beginning if no offset exists
+        props.put("enable.auto.commit", "true"); // Auto-commit offsets
+
+        // SSL Configuration
+        props.put("security.protocol", securityProtocol); // SSL or SASL_SSL
+        props.put("ssl.truststore.location", truststorePath);
+        props.put("ssl.truststore.password", truststorePassword);
+        
+        if (keystorePath != null && !keystorePath.isEmpty()) {
+            props.put("ssl.keystore.location", keystorePath);
+            props.put("ssl.keystore.password", keystorePassword);
+        }
+
+        // SASL Configuration (if needed)
+        if (saslMechanism != null && !saslMechanism.isEmpty()) {
+            props.put("sasl.mechanism", saslMechanism);
+            props.put("sasl.jaas.config", jaasConfig);
+        }
+
+        consumer = new KafkaConsumer<>(props);
+        consumer.subscribe(Collections.singletonList(topic));
+    }
+
+    public void readMessages(int maxMessages) {
+        int messageCount = 0;
+        try {
+            System.out.println("Listening for messages...");
+            while (messageCount < maxMessages) {
+                ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(1));
+                for (ConsumerRecord<String, String> record : records) {
+                    System.out.println("Received Message: Key=" + record.key() + ", Value=" + record.value() +
+                            ", Partition=" + record.partition() + ", Offset=" + record.offset());
+                    messageCount++;
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error while consuming messages: " + e.getMessage());
+            e.printStackTrace();
+        } finally {
+            consumer.close();
+            System.out.println("Kafka Consumer closed.");
+        }
+    }
+
+    public static void main(String[] args) {
+        // Kafka configuration - update with actual values
+        String bootstrapServers = "kafka-secure-server:9093";  // Replace with your Kafka broker
+        String topic = "secure-topic";  // Replace with your topic name
+        String groupId = "secure-consumer-group";  // Replace with your consumer group
+
+        // SSL Configuration - Update paths and passwords
+        String truststorePath = "/path/to/truststore.jks";  
+        String truststorePassword = "truststore-password";  
+        String keystorePath = "/path/to/keystore.jks";  
+        String keystorePassword = "keystore-password";  
+
+        // SASL Configuration (if required)
+        String saslMechanism = "PLAIN"; // Use "PLAIN", "SCRAM-SHA-256", or "GSSAPI" based on your setup
+        String securityProtocol = "SASL_SSL"; // Use "SSL" for SSL only, "SASL_SSL" for SASL+SSL
+        String jaasConfig = "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"your-username\" password=\"your-password\";";
+
+        // Create and start the Kafka consumer
+        KafkaConsumerUtil consumerUtil = new KafkaConsumerUtil(
+                bootstrapServers, topic, groupId,
+                truststorePath, truststorePassword,
+                keystorePath, keystorePassword,
+                saslMechanism, securityProtocol, jaasConfig
+        );
+        consumerUtil.readMessages(10); // Read max 10 messages
+    }
+}
