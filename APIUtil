@@ -1,0 +1,89 @@
+public class ApiStepDefs {
+
+    private Response response;
+
+    @Given("user sends a {string} request to {string} with base url {string}")
+    public void sendRequest(String method, String endpoint, String baseUrl, DataTable headersTable, DataTable pathParams, DataTable queryParams, String payloadFile) {
+        Map<String, String> headers = ApiUtils.convertDataTableToMap(headersTable);
+        Map<String, String> pathParameters = ApiUtils.convertDataTableToMap(pathParams);
+        Map<String, String> queryParameters = ApiUtils.convertDataTableToMap(queryParams);
+
+        String payload = payloadFile != null && !payloadFile.isEmpty() 
+                ? JsonReader.readJsonFile("payloads/" + payloadFile)
+                : null;
+
+        response = ApiUtils.sendRequest(method, baseUrl, endpoint, headers, pathParameters, queryParameters, payload);
+    }
+
+    @Then("response status code should be {int}")
+    public void verifyStatusCode(int statusCode) {
+        response.then().statusCode(statusCode);
+    }
+
+    @Then("response should contain {string}")
+    public void verifyResponseBodyContains(String expected) {
+        Assert.assertTrue(response.getBody().asString().contains(expected));
+    }
+}
+--------------------------------------------
+public class ApiUtils {
+
+    public static Response sendRequest(
+        String method,
+        String baseUrl,
+        String endpoint,
+        Map<String, String> headers,
+        Map<String, String> pathParams,
+        Map<String, String> queryParams,
+        String payload) {
+
+        RequestSpecification req = RestAssured.given().baseUri(baseUrl);
+
+        if (headers != null) req.headers(headers);
+        if (pathParams != null) req.pathParams(pathParams);
+        if (queryParams != null) req.queryParams(queryParams);
+        if (payload != null) req.body(payload).contentType(ContentType.JSON);
+
+        switch (method.toUpperCase()) {
+            case "GET":
+                return req.get(endpoint);
+            case "POST":
+                return req.post(endpoint);
+            case "PUT":
+                return req.put(endpoint);
+            case "DELETE":
+                return req.delete(endpoint);
+            default:
+                throw new IllegalArgumentException("Unsupported HTTP method: " + method);
+        }
+    }
+
+    public static Map<String, String> convertDataTableToMap(DataTable table) {
+        if (table == null) return Collections.emptyMap();
+        return table.asMap(String.class, String.class);
+    }
+}
+---------------------------------------------
+public class JsonReader {
+
+    public static String readJsonFile(String relativePath) {
+        try {
+            return new String(Files.readAllBytes(Paths.get("src/test/resources/" + relativePath)));
+        } catch (IOException e) {
+            throw new RuntimeException("Error reading JSON file: " + relativePath, e);
+        }
+    }
+}
+--------------------------
+Feature: API Testing with Rest Assured
+
+  Scenario: Create a user
+    Given user sends a "POST" request to "/users" with base url "https://reqres.in/api"
+      | Content-Type | application/json |
+    And with path parameters
+      | userId | 123 |
+    And with query parameters
+      | verbose | true |
+    And payload file "createUser.json"
+    Then response status code should be 201
+    And response should contain "id"
