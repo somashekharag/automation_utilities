@@ -1,0 +1,128 @@
+package com.yourcompany.octane;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.http.HttpEntity;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.ContentType;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.entity.mime.MultipartEntityBuilder;
+import org.apache.http.entity.mime.content.ByteArrayBody;
+import org.apache.http.entity.mime.content.StringBody;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.time.LocalDate;
+import java.util.HashMap;
+import java.util.Map;
+
+public class OctaneReporter {
+
+    private static final String BASE_URL = "https://<your-octane-host>/";
+    private static final String SHARED_SPACE_ID = "<shared_space_id>";
+    private static final String WORKSPACE_ID = "<workspace_id>";
+    private static final String CLIENT_ID = "<your_client_id>";
+    private static final String CLIENT_SECRET = "<your_client_secret>";
+
+    private final ObjectMapper mapper = new ObjectMapper();
+    private String accessToken;
+
+    public OctaneReporter() throws IOException {
+        this.accessToken = fetchAccessToken();
+    }
+
+    private String fetchAccessToken() throws IOException {
+        String url = BASE_URL + "authentication/sign_in";
+        Map<String, String> credentials = new HashMap<>();
+        credentials.put("client_id", CLIENT_ID);
+        credentials.put("client_secret", CLIENT_SECRET);
+
+        HttpPost post = new HttpPost(url);
+        post.addHeader("Content-Type", "application/json");
+        post.setEntity(new StringEntity(mapper.writeValueAsString(credentials)));
+
+        try (CloseableHttpClient client = HttpClients.createDefault();
+             CloseableHttpResponse response = client.execute(post)) {
+            String responseBody = EntityUtils.toString(response.getEntity());
+            JsonNode node = mapper.readTree(responseBody);
+            return node.get("access_token").asText();
+        }
+    }
+
+    public String createTestSuiteRun(String suiteId, String suiteRunName) throws Exception {
+        String url = BASE_URL + "api/shared_spaces/" + SHARED_SPACE_ID + "/workspaces/" + WORKSPACE_ID + "/test_suite_runs";
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("name", suiteRunName);
+        payload.put("native_status", "in_progress");
+        payload.put("test_suite", Map.of("id", suiteId));
+
+        return sendPostRequest(url, payload);
+    }
+
+    public String logTestRun(String testCaseId, String suiteRunId, String testName, String status) throws Exception {
+        String url = BASE_URL + "api/shared_spaces/" + SHARED_SPACE_ID + "/workspaces/" + WORKSPACE_ID + "/runs";
+
+        Map<String, Object> run = new HashMap<>();
+        run.put("name", testName);
+        run.put("subtype", "run_automated");
+        run.put("status", status);
+        run.put("test", Map.of("id", testCaseId, "type", "test_automated"));
+        run.put("test_suite_run", Map.of("id", suiteRunId));
+
+        return sendPostRequest(url, run);
+    }
+
+    public void attachScreenshot(String runId, File screenshot) throws IOException {
+        String url = BASE_URL + "api/shared_spaces/" + SHARED_SPACE_ID + "/workspaces/" + WORKSPACE_ID + "/attachments";
+
+        byte[] screenshotBytes = Files.readAllBytes(screenshot.toPath());
+
+        HttpPost post = new HttpPost(url);
+        post.setHeader("Authorization", "Bearer " + accessToken);
+
+        HttpEntity entity = MultipartEntityBuilder.create()
+            .addPart("entity", new StringBody("run", ContentType.TEXT_PLAIN))
+            .addPart("entity_id", new StringBody(runId, ContentType.TEXT_PLAIN))
+            .addPart("file", new ByteArrayBody(screenshotBytes, ContentType.DEFAULT_BINARY, screenshot.getName()))
+            .build();
+
+        post.setEntity(entity);
+
+        try (CloseableHttpClient client = HttpClients.createDefault();
+             CloseableHttpResponse response = client.execute(post)) {
+            EntityUtils.consume(response.getEntity());
+        }
+    }
+
+    private String sendPostRequest(String url, Map<String, Object> body) throws Exception {
+        String json = mapper.writeValueAsString(body);
+
+        HttpPost request = new HttpPost(url);
+        request.addHeader("Authorization", "Bearer " + accessToken);
+        request.addHeader("Content-Type", "application/json");
+        request.setEntity(new StringEntity(json));
+
+        try (CloseableHttpClient client = HttpClients.createDefault();
+             CloseableHttpResponse response = client.execute(request)) {
+
+            String result = EntityUtils.toString(response.getEntity());
+            JsonNode node = mapper.readTree(result);
+
+            if (node.has("data") && node.get("data").isArray() && node.get("data").size() > 0) {
+                return node.get("data").get(0).get("id").asText();
+            } else {
+                throw new RuntimeException("Unexpected response: " + result);
+            }
+        }
+    }
+
+    public String generateDefaultSuiteRunName() {
+        return "Regression Run - " + LocalDate.now();
+    }
+}
