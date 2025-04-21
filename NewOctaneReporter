@@ -1,0 +1,168 @@
+package com.yourcompany.octane;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpHost;
+import org.apache.http.client.CookieStore;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.cookie.Cookie;
+import org.apache.http.entity.ContentType;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.entity.mime.MultipartEntityBuilder;
+import org.apache.http.entity.mime.content.ByteArrayBody;
+import org.apache.http.entity.mime.content.StringBody;
+import org.apache.http.impl.client.BasicCookieStore;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.util.EntityUtils;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.time.LocalDate;
+import java.util.HashMap;
+import java.util.Map;
+
+public class OctaneReporter {
+
+    private static final String BASE_URL = "https://<your-octane-host>/";
+    private static final String SHARED_SPACE_ID = "<shared_space_id>";
+    private static final String WORKSPACE_ID = "<workspace_id>";
+    private static final String CLIENT_ID = "<your_client_id>";
+    private static final String CLIENT_SECRET = "<your_client_secret>";
+
+    private static final String PROXY_HOST = "your.proxy.host";
+    private static final int PROXY_PORT = 8080;
+
+    private final ObjectMapper mapper = new ObjectMapper();
+    private Cookie lwssoCookie;
+    private CookieStore cookieStore;
+
+    public OctaneReporter() throws IOException {
+        this.cookieStore = new BasicCookieStore();
+        this.lwssoCookie = fetchAccessTokenFromCookie();
+    }
+
+    private CloseableHttpClient createHttpClientWithProxy() {
+        HttpHost proxy = new HttpHost(PROXY_HOST, PROXY_PORT);
+        return HttpClientBuilder.create().setProxy(proxy).setDefaultCookieStore(cookieStore).build();
+    }
+
+    private Cookie fetchAccessTokenFromCookie() throws IOException {
+        String url = BASE_URL + "authentication/sign_in";
+
+        Map<String, String> credentials = new HashMap<>();
+        credentials.put("client_id", CLIENT_ID);
+        credentials.put("client_secret", CLIENT_SECRET);
+
+        HttpPost post = new HttpPost(url);
+        post.addHeader("Content-Type", "application/json");
+        post.setEntity(new StringEntity(mapper.writeValueAsString(credentials)));
+
+        try (CloseableHttpClient client = HttpClientBuilder.create().setProxy(new HttpHost(PROXY_HOST, PROXY_PORT)).setDefaultCookieStore(cookieStore).build();
+             CloseableHttpResponse response = client.execute(post)) {
+
+            for (Cookie cookie : cookieStore.getCookies()) {
+                if ("LWSSO_COOKIE_KEY".equals(cookie.getName())) {
+                    return cookie;
+                }
+            }
+            throw new RuntimeException("LWSSO_COOKIE_KEY not found in cookie store");
+        }
+    }
+
+    public String createAutomatedTestSuite(String suiteName, String description, String applicationModuleId) throws Exception {
+        String url = BASE_URL + "api/shared_spaces/" + SHARED_SPACE_ID + "/workspaces/" + WORKSPACE_ID + "/test_suites";
+
+        Map<String, Object> suiteData = new HashMap<>();
+        suiteData.put("name", suiteName);
+        suiteData.put("description", description);
+        suiteData.put("subtype", "test_suite_automated");
+
+        if (applicationModuleId != null && !applicationModuleId.isEmpty()) {
+            Map<String, Object> module = new HashMap<>();
+            module.put("type", "application_module");
+            module.put("id", applicationModuleId);
+            suiteData.put("application_modules", Map.of("data", new Object[]{module}));
+        }
+
+        Map<String, Object> payload = Map.of("data", new Object[]{suiteData});
+        return sendPostRequest(url, payload);
+    }
+
+    public String createTestSuiteRun(String suiteId, String suiteRunName) throws Exception {
+        String url = BASE_URL + "api/shared_spaces/" + SHARED_SPACE_ID + "/workspaces/" + WORKSPACE_ID + "/test_suite_runs";
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("name", suiteRunName);
+        payload.put("native_status", "in_progress");
+        payload.put("test_suite", Map.of("id", suiteId));
+
+        return sendPostRequest(url, payload);
+    }
+
+    public String logTestRun(String testCaseId, String suiteRunId, String testName, String status) throws Exception {
+        String url = BASE_URL + "api/shared_spaces/" + SHARED_SPACE_ID + "/workspaces/" + WORKSPACE_ID + "/runs";
+
+        Map<String, Object> run = new HashMap<>();
+        run.put("name", testName);
+        run.put("subtype", "run_automated");
+        run.put("status", status);
+        run.put("test", Map.of("id", testCaseId, "type", "test_automated"));
+        run.put("test_suite_run", Map.of("id", suiteRunId));
+
+        return sendPostRequest(url, run);
+    }
+
+    public void attachScreenshot(String runId, File screenshot) throws IOException {
+        String url = BASE_URL + "api/shared_spaces/" + SHARED_SPACE_ID + "/workspaces/" + WORKSPACE_ID + "/attachments";
+
+        byte[] screenshotBytes = Files.readAllBytes(screenshot.toPath());
+
+        HttpPost post = new HttpPost(url);
+        post.setHeader("LWSSO_COOKIE_KEY", lwssoCookie.getValue());
+
+        HttpEntity entity = MultipartEntityBuilder.create()
+            .addPart("entity", new StringBody("run", ContentType.TEXT_PLAIN))
+            .addPart("entity_id", new StringBody(runId, ContentType.TEXT_PLAIN))
+            .addPart("file", new ByteArrayBody(screenshotBytes, ContentType.DEFAULT_BINARY, screenshot.getName()))
+            .build();
+
+        post.setEntity(entity);
+
+        try (CloseableHttpClient client = createHttpClientWithProxy();
+             CloseableHttpResponse response = client.execute(post)) {
+            EntityUtils.consume(response.getEntity());
+        }
+    }
+
+    private String sendPostRequest(String url, Map<String, Object> body) throws Exception {
+        String json = mapper.writeValueAsString(body);
+
+        HttpPost request = new HttpPost(url);
+        request.setHeader("LWSSO_COOKIE_KEY", lwssoCookie.getValue());
+        request.setHeader("Content-Type", "application/json");
+        request.setEntity(new StringEntity(json));
+
+        try (CloseableHttpClient client = createHttpClientWithProxy();
+             CloseableHttpResponse response = client.execute(request)) {
+
+            String result = EntityUtils.toString(response.getEntity());
+            JsonNode node = mapper.readTree(result);
+
+            if (node.has("data") && node.get("data").isArray() && node.get("data").size() > 0) {
+                return node.get("data").get(0).get("id").asText();
+            } else if (node.has("id")) {
+                return node.get("id").asText();
+            } else {
+                throw new RuntimeException("Unexpected response: " + result);
+            }
+        }
+    }
+
+    public String generateDefaultSuiteRunName() {
+        return "Regression Run - " + LocalDate.now();
+    }
+} 
