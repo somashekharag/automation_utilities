@@ -1,0 +1,96 @@
+package com.yourcompany.trc;
+
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.stereotype.Component;
+
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.file.*;
+import java.util.Properties;
+
+@Component
+public class TrcUploader {
+
+    private final String CONFIG_FILE = "trc-config.properties";
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void uploadResults() {
+        Properties props = new Properties();
+
+        try (InputStream input = getClass().getClassLoader().getResourceAsStream(CONFIG_FILE)) {
+            if (input == null) {
+                System.err.println("Cannot find config file: " + CONFIG_FILE);
+                return;
+            }
+            props.load(input);
+        } catch (IOException e) {
+            System.err.println("Failed to load TRC config: " + e.getMessage());
+            return;
+        }
+
+        try {
+            Path jarPath = downloadAndCacheJar(
+                props.getProperty("trc.jar.url"),
+                props.getProperty("trc.jar.local.path")
+            );
+
+            ProcessBuilder builder = new ProcessBuilder(
+                "java", "-jar", jarPath.toString(),
+                "--server", props.getProperty("server"),
+                "--sharedspace", props.getProperty("sharedspace"),
+                "--workspace", props.getProperty("workspace"),
+                "--client-id", props.getProperty("client-id"),
+                "--client-secret", props.getProperty("client-secret"),
+                "--results-file", props.getProperty("results-file"),
+                "--format", props.getProperty("format")
+            );
+
+            builder.inheritIO();
+            Process process = builder.start();
+            int exitCode = process.waitFor();
+            System.out.println("TRC execution finished with exit code: " + exitCode);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private Path downloadAndCacheJar(String jarUrl, String localPath) throws IOException {
+        Path cachedPath = Paths.get(localPath).toAbsolutePath();
+        if (Files.exists(cachedPath)) {
+            System.out.println("TRC jar already cached at: " + cachedPath);
+            return cachedPath;
+        }
+
+        Files.createDirectories(cachedPath.getParent());
+        System.out.println("Downloading TRC jar from: " + jarUrl);
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(jarUrl).openConnection();
+        conn.setRequestMethod("GET");
+        try (InputStream in = conn.getInputStream();
+             FileOutputStream out = new FileOutputStream(cachedPath.toFile())) {
+            in.transferTo(out);
+        }
+
+        System.out.println("TRC jar downloaded to: " + cachedPath);
+        return cachedPath;
+    }
+}
+
+
+
+
+------------------------------
+
+trc.jar.url=https://your-nexus-url/repository/tools/trc-client-standalone.jar
+trc.jar.local.path=trc-cache/trc-client-standalone.jar
+
+server=https://your-octane-url
+sharedspace=1001
+workspace=2002
+client-id=your-client-id
+client-secret=your-client-secret
+results-file=target/cucumber-report/cucumber.json
+format=cucumber
