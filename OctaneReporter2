@@ -8,49 +8,33 @@ import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.file.*;
-import java.util.Properties;
 
 @Component
 public class TrcUploader {
 
-    private final String CONFIG_FILE = "trc-config.properties";
+    private static final String CONFIG_FILE = "trc-config.properties";
+    private static final String CONFIG_COPY_PATH = "trc-cache/config.properties";
 
     @EventListener(ApplicationReadyEvent.class)
     public void uploadResults() {
-        Properties props = new Properties();
-
-        try (InputStream input = getClass().getClassLoader().getResourceAsStream(CONFIG_FILE)) {
-            if (input == null) {
-                System.err.println("Cannot find config file: " + CONFIG_FILE);
-                return;
-            }
-            props.load(input);
-        } catch (IOException e) {
-            System.err.println("Failed to load TRC config: " + e.getMessage());
-            return;
-        }
-
         try {
             Path jarPath = downloadAndCacheJar(
-                props.getProperty("trc.jar.url"),
-                props.getProperty("trc.jar.local.path")
+                "https://your-nexus-url/repository/tools/trc-client-standalone.jar",
+                "trc-cache/trc-client-standalone.jar"
             );
+
+            // Copy config to a physical file (since we can't directly pass resources from classpath)
+            Path configPath = copyConfigToDisk(CONFIG_FILE, CONFIG_COPY_PATH);
 
             ProcessBuilder builder = new ProcessBuilder(
                 "java", "-jar", jarPath.toString(),
-                "--server", props.getProperty("server"),
-                "--sharedspace", props.getProperty("sharedspace"),
-                "--workspace", props.getProperty("workspace"),
-                "--client-id", props.getProperty("client-id"),
-                "--client-secret", props.getProperty("client-secret"),
-                "--results-file", props.getProperty("results-file"),
-                "--format", props.getProperty("format")
+                "-c", configPath.toString()
             );
 
-            builder.inheritIO();
+            builder.inheritIO(); // show logs in console
             Process process = builder.start();
             int exitCode = process.waitFor();
-            System.out.println("TRC execution finished with exit code: " + exitCode);
+            System.out.println("TRC upload finished with exit code: " + exitCode);
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -60,22 +44,35 @@ public class TrcUploader {
     private Path downloadAndCacheJar(String jarUrl, String localPath) throws IOException {
         Path cachedPath = Paths.get(localPath).toAbsolutePath();
         if (Files.exists(cachedPath)) {
-            System.out.println("TRC jar already cached at: " + cachedPath);
+            System.out.println("TRC JAR already cached at: " + cachedPath);
             return cachedPath;
         }
 
         Files.createDirectories(cachedPath.getParent());
-        System.out.println("Downloading TRC jar from: " + jarUrl);
+        System.out.println("Downloading TRC JAR from: " + jarUrl);
 
         HttpURLConnection conn = (HttpURLConnection) new URL(jarUrl).openConnection();
         conn.setRequestMethod("GET");
+
         try (InputStream in = conn.getInputStream();
              FileOutputStream out = new FileOutputStream(cachedPath.toFile())) {
             in.transferTo(out);
         }
 
-        System.out.println("TRC jar downloaded to: " + cachedPath);
+        System.out.println("TRC JAR downloaded to: " + cachedPath);
         return cachedPath;
+    }
+
+    private Path copyConfigToDisk(String classpathFile, String targetPath) throws IOException {
+        Path configPath = Paths.get(targetPath).toAbsolutePath();
+        Files.createDirectories(configPath.getParent());
+
+        try (InputStream in = getClass().getClassLoader().getResourceAsStream(classpathFile)) {
+            if (in == null) throw new FileNotFoundException("Could not find " + classpathFile);
+            Files.copy(in, configPath, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        return configPath;
     }
 }
 
