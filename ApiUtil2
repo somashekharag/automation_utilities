@@ -1,0 +1,63 @@
+package utils;
+
+import io.restassured.RestAssured;
+import io.restassured.response.Response;
+import io.restassured.specification.RequestSpecification;
+
+import java.util.Map;
+import java.util.HashMap;
+
+public class ApiUtils {
+
+    public static Response sendRequest(String method,
+                                       String baseUrl,
+                                       String endpoint,
+                                       Map<String, String> headers,
+                                       Map<String, String> pathParams,
+                                       Map<String, String> queryParams,
+                                       String payload) {
+
+        RequestSpecification request = RestAssured.given().baseUri(baseUrl).relaxedHTTPSValidation();
+
+        if (headers != null) {
+            headers.forEach((key, value) -> request.header(key, resolve(value)));
+        }
+
+        if (queryParams != null) {
+            queryParams.forEach((key, value) -> request.queryParam(key, resolve(value)));
+        }
+
+        if (pathParams != null) {
+            for (Map.Entry<String, String> entry : pathParams.entrySet()) {
+                endpoint = endpoint.replace("{" + entry.getKey() + "}", resolve(entry.getValue()));
+            }
+        }
+
+        if (payload != null && !payload.isEmpty()) {
+            request.body(payload);
+        }
+
+        return switch (method.toUpperCase()) {
+            case "GET" -> request.get(endpoint);
+            case "POST" -> request.post(endpoint);
+            case "PUT" -> request.put(endpoint);
+            case "DELETE" -> request.delete(endpoint);
+            default -> throw new IllegalArgumentException("Invalid method: " + method);
+        };
+    }
+
+    public static Map<String, String> convertDataTableToMap(io.cucumber.datatable.DataTable dataTable) {
+        return dataTable.asMaps().stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("DataTable should have at least one row"));
+    }
+
+    private static String resolve(String value) {
+        if (value == null) return null;
+        return value.replaceAll("\\$\\{([^}]+)}", match -> {
+            String key = match.group(1);
+            Object val = ScenarioContext.get(key);
+            return val != null ? val.toString() : match.group(0); // keep original if key not found
+        });
+    }
+}
