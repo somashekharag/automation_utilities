@@ -1,89 +1,377 @@
-public class ApiStepDefs {
+API Config Reader
+------------------------
+package com.itaf.api.utils;
 
-    private Response response;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Properties;
 
-    @Given("user sends a {string} request to {string} with base url {string}")
-    public void sendRequest(String method, String endpoint, String baseUrl, DataTable headersTable, DataTable pathParams, DataTable queryParams, String payloadFile) {
-        Map<String, String> headers = ApiUtils.convertDataTableToMap(headersTable);
-        Map<String, String> pathParameters = ApiUtils.convertDataTableToMap(pathParams);
-        Map<String, String> queryParameters = ApiUtils.convertDataTableToMap(queryParams);
+public class APIConfigReader {
+    private static final Properties properties = new Properties();
 
-        String payload = payloadFile != null && !payloadFile.isEmpty() 
-                ? JsonReader.readJsonFile("payloads/" + payloadFile)
-                : null;
-
-        response = ApiUtils.sendRequest(method, baseUrl, endpoint, headers, pathParameters, queryParameters, payload);
+    static {
+        try (InputStream input = APIConfigReader.class.getClassLoader()
+                .getResourceAsStream("configs/api.config.properties")) {
+            if (input != null) {
+                properties.load(input);
+            } else {
+                throw new RuntimeException("configs/api.config.properties not found");
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Error loading api.config.properties", e);
+        }
     }
 
-    @Then("response status code should be {int}")
-    public void verifyStatusCode(int statusCode) {
-        response.then().statusCode(statusCode);
+    public static String get(String key) {
+        return properties.getProperty(key);
     }
 
-    @Then("response should contain {string}")
-    public void verifyResponseBodyContains(String expected) {
-        Assert.assertTrue(response.getBody().asString().contains(expected));
+    public static boolean getBoolean(String key) {
+        return Boolean.parseBoolean(properties.getProperty(key));
     }
 }
---------------------------------------------
-public class ApiUtils {
 
-    public static Response sendRequest(
-        String method,
-        String baseUrl,
-        String endpoint,
-        Map<String, String> headers,
-        Map<String, String> pathParams,
-        Map<String, String> queryParams,
-        String payload) {
+------------------------------------------------------
+API Scenario Context
 
-        RequestSpecification req = RestAssured.given().baseUri(baseUrl);
 
-        if (headers != null) req.headers(headers);
-        if (pathParams != null) req.pathParams(pathParams);
-        if (queryParams != null) req.queryParams(queryParams);
-        if (payload != null) req.body(payload).contentType(ContentType.JSON);
+package com.itaf.api.utils;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class APIScenarioContext {
+    private static final ThreadLocal<Map<String, Object>> context = ThreadLocal.withInitial(HashMap::new);
+
+    public static void set(String key, Object value) {
+        context.get().put(key, value);
+    }
+
+    public static Object get(String key) {
+        return context.get().get(key);
+    }
+
+    public static void clear() {
+        context.get().clear();
+    }
+}
+
+-------------------------------------------------
+Auth Util
+
+package com.itaf.api.utils;
+
+import io.restassured.RestAssured;
+import io.restassured.response.Response;
+
+public class AuthUtil {
+    public static String getBearerToken(String tokenUrl, String clientId, String clientSecret, String grantType) {
+        Response response = RestAssured.given()
+                .relaxedHTTPSValidation()
+                .contentType("application/x-www-form-urlencoded")
+                .formParam("grant_type", grantType)
+                .formParam("client_id", clientId)
+                .formParam("client_secret", clientSecret)
+                .post(tokenUrl);
+
+        if (response.statusCode() != 200) {
+            throw new RuntimeException("Failed to fetch token: " + response.getBody().asString());
+        }
+
+        return response.jsonPath().getString("access_token");
+    }
+}
+
+--------------------------------------------------
+API Util
+
+package com.itaf.api.utils;
+
+import io.restassured.RestAssured;
+import io.restassured.response.Response;
+import io.restassured.specification.RequestSpecification;
+
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public class ITAFApiUtil {
+
+    @SuppressWarnings("unchecked")
+    public static Response sendRequest(String method, String endpoint) {
+
+        String baseUrl = (String) APIScenarioContext.get("baseUrl");
+
+        if (baseUrl == null || baseUrl.isEmpty()) {
+            throw new IllegalArgumentException("Base URL is not set. Please use step: Given api request with base url \"<url>\"");
+        }
+
+        RestAssured.baseURI = baseUrl;
+
+        RequestSpecification request = RestAssured.given().relaxedHTTPSValidation();
+
+        // Add headers from the feature file
+        Map<String, String> headers = (Map<String, String>) APIScenarioContext.get("headers");
+        if (headers != null) {
+            headers.forEach((key, value) -> request.header(key, resolve(value)));
+        }
+
+        // Add Bearer token if set in ScenarioContext and not already in headers
+        String token = (String) APIScenarioContext.get("authToken");
+        if (token != null && (headers == null || !headers.containsKey("Authorization"))) {
+            request.header("Authorization", "Bearer " + token);
+        }
+
+        // Add query parameters
+        Map<String, String> queryParams = (Map<String, String>) APIScenarioContext.get("queryParams");
+        if (queryParams != null) {
+            queryParams.forEach((key, value) -> request.queryParam(key, resolve(value)));
+        }
+
+        // Add path parameters
+        Map<String, String> pathParams = (Map<String, String>) APIScenarioContext.get("pathParams");
+        if (pathParams != null) {
+            for (Map.Entry<String, String> entry : pathParams.entrySet()) {
+                endpoint = endpoint.replace("{" + entry.getKey() + "}", resolve(entry.getValue()));
+            }
+        }
+
+        // Add payload if available
+        String payload = (String) APIScenarioContext.get("requestPayload");
+        if (payload != null && !payload.isEmpty()) {
+            request.body(payload);
+            request.header("Content-Type", "application/json");
+        }
+
+        // Log the request
+        request.log().all();
+
 
         switch (method.toUpperCase()) {
             case "GET":
-                return req.get(endpoint);
+                return request.get(endpoint);
             case "POST":
-                return req.post(endpoint);
+                return request.post(endpoint);
             case "PUT":
-                return req.put(endpoint);
+                return request.put(endpoint);
             case "DELETE":
-                return req.delete(endpoint);
+                return request.delete(endpoint);
             default:
                 throw new IllegalArgumentException("Unsupported HTTP method: " + method);
         }
     }
 
-    public static Map<String, String> convertDataTableToMap(DataTable table) {
-        if (table == null) return Collections.emptyMap();
-        return table.asMap(String.class, String.class);
+    public static Map<String, String> convertDataTableToMap(io.cucumber.datatable.DataTable dataTable) {
+        return dataTable.asMaps().stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("DataTable should have at least one row"));
+    }
+
+    private static String resolve(String value) {
+        if (value == null) return null;
+
+        Pattern pattern = Pattern.compile("\\$\\{([^}]+)}");
+        Matcher matcher = pattern.matcher(value);
+        StringBuffer buffer = new StringBuffer();
+
+        while (matcher.find()) {
+            String key = matcher.group(1);
+            Object val = APIScenarioContext.get(key);
+            matcher.appendReplacement(buffer, val != null ? Matcher.quoteReplacement(val.toString()) : matcher.group(0));
+        }
+
+        matcher.appendTail(buffer);
+        return buffer.toString();
     }
 }
----------------------------------------------
-public class JsonReader {
 
-    public static String readJsonFile(String relativePath) {
+------------------------------------
+JSON Util
+
+package com.itaf.api.utils;
+
+import com.jayway.jsonpath.DocumentContext;
+import com.jayway.jsonpath.JsonPath;
+
+import java.util.Map;
+
+public class JsonUtils {
+
+    public static String updateJsonFields(String jsonPayload, Map<String, String> updates) {
+        DocumentContext context = JsonPath.parse(jsonPayload);
+
+        for (Map.Entry<String, String> entry : updates.entrySet()) {
+            Object parsedValue = parseToCorrectType(entry.getValue());
+            context.set(entry.getKey(), parsedValue);
+        }
+
+        return context.jsonString();
+    }
+
+    private static Object parseToCorrectType(String value) {
+        if (value == null || value.equalsIgnoreCase("null")) return null;
+        if (value.equalsIgnoreCase("true") || value.equalsIgnoreCase("false")) return Boolean.parseBoolean(value);
         try {
-            return new String(Files.readAllBytes(Paths.get("src/test/resources/" + relativePath)));
-        } catch (IOException e) {
-            throw new RuntimeException("Error reading JSON file: " + relativePath, e);
+            if (value.contains(".")) return Double.parseDouble(value);
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return value;
         }
     }
 }
---------------------------
-Feature: API Testing with Rest Assured
 
-  Scenario: Create a user
-    Given user sends a "POST" request to "/users" with base url "https://reqres.in/api"
-      | Content-Type | application/json |
-    And with path parameters
-      | userId | 123 |
-    And with query parameters
-      | verbose | true |
-    And payload file "createUser.json"
-    Then response status code should be 201
-    And response should contain "id"
+-------------------------------
+API Steps
+
+package com.itaf.aut.step_definitions;
+
+import com.itaf.api.utils.*;
+import com.jayway.jsonpath.JsonPath;
+import io.cucumber.datatable.DataTable;
+import io.cucumber.java.en.And;
+import io.cucumber.java.en.Given;
+import io.cucumber.java.en.Then;
+import io.cucumber.java.en.When;
+import io.restassured.response.Response;
+import org.testng.AssertJUnit;
+
+import java.io.FileNotFoundException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static org.testng.AssertJUnit.assertEquals;
+
+public class APISteps {
+
+    @Given("api request with base url {string}")
+    public void setBaseUrl(String baseUrl) {
+        APIScenarioContext.set("baseUrl", baseUrl);
+    }
+
+    @Given("auth token is fetched using key {string}")
+    public void fetchAuthTokenByKey(String key) {
+        String tokenUrl = APIConfigReader.get(key + ".auth.token_url");
+        String clientId = APIConfigReader.get(key + ".auth.client_id");
+        String clientSecret = APIConfigReader.get(key + ".auth.client_secret");
+        String grantType = APIConfigReader.get(key + ".auth.grant_type");
+
+        String token = AuthUtil.getBearerToken(tokenUrl, clientId, clientSecret, grantType);
+        APIScenarioContext.set("authToken", token);
+    }
+
+    @Given("user stores key {string} with value {string}")
+    public void storeKeyValue(String key, String value) {
+        APIScenarioContext.set(key, value);
+    }
+
+    @Given("with headers")
+    public void withHeaders(DataTable dataTable) {
+        Map<String, String> headers = ITAFApiUtil.convertDataTableToMap(dataTable);
+        APIScenarioContext.set("headers", headers); // dynamic resolution happens in ApiUtils
+    }
+
+    @Given("with query parameters")
+    public void withQueryParameters(DataTable dataTable) {
+        Map<String, String> headers = ITAFApiUtil.convertDataTableToMap(dataTable);
+        APIScenarioContext.set("queryParams", headers); // dynamic resolution happens in ApiUtils
+    }
+
+    @Given("with path parameters")
+    public void withPathParameters(DataTable dataTable) {
+        Map<String, String> headers = ITAFApiUtil.convertDataTableToMap(dataTable);
+        APIScenarioContext.set("pathParams", headers); // dynamic resolution happens in ApiUtils
+    }
+
+    @Given("with request payload {string}")
+    public void setPayloadFromFile(String filePath) throws Exception {
+        ClassLoader classLoader = getClass().getClassLoader();
+        try (InputStream inputStream = classLoader.getResourceAsStream(filePath)) {
+            if (inputStream == null) {
+                throw new FileNotFoundException("Request json payload not found: " + filePath);
+            }
+            String json = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+            APIScenarioContext.set("requestPayload", json);
+        }
+    }
+
+    @And("update request payload fields")
+    public void updateJsonFields(DataTable table) {
+        Map<String, String> updates = table.asMap();
+        String payload = (String) APIScenarioContext.get("requestPayload");
+        String updatedPayload = JsonUtils.updateJsonFields(payload, updates);
+        APIScenarioContext.set("requestPayload", updatedPayload);
+    }
+
+    @Then("verify response code is {int}")
+    public void verifyStatusCode(int expected) {
+        Response response = (Response) APIScenarioContext.get("response");
+        AssertJUnit.assertEquals(expected, response.getStatusCode());
+    }
+
+    @When("user sends {string} request to {string}")
+    public void sendHttpRequest(String method, String endpoint) {
+        Response response = ITAFApiUtil.sendRequest(method, endpoint);
+        APIScenarioContext.set("response", response);
+    }
+
+    @Then("response should contain following json paths and values")
+    public void validateJsonPathsAndValues(DataTable dataTable) {
+        Response response = (Response) APIScenarioContext.get("response");
+        if (response == null) {
+            throw new IllegalStateException("No response found in context");
+        }
+
+        List<Map<String, String>> rows = dataTable.asMaps(String.class, String.class);
+
+        for (Map<String, String> row : rows) {
+            String jsonPath = row.get("jsonPath");
+            String expectedValue = row.get("expectedValue");
+
+            Object actualValue = JsonPath.read(response.asString(), jsonPath);
+
+            if (actualValue == null) {
+                throw new AssertionError("Value not found for path: " + jsonPath);
+            }
+
+            String actualStr = actualValue.toString();
+            if (!actualStr.equals(expectedValue)) {
+                throw new AssertionError("For path '" + jsonPath + "': expected '" + expectedValue + "', but got '" + actualStr + "'");
+            }
+        }
+    }
+
+    private static String resolve(String value) {
+        if (value == null) return null;
+
+        Pattern pattern = Pattern.compile("\\$\\{([^}]+)}");
+        Matcher matcher = pattern.matcher(value);
+        StringBuffer buffer = new StringBuffer();
+
+        while (matcher.find()) {
+            String key = matcher.group(1);
+            Object val = APIScenarioContext.get(key);
+            matcher.appendReplacement(buffer, val != null ? Matcher.quoteReplacement(val.toString()) : matcher.group(0));
+        }
+
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+}
+--------------------------------
+config.api.properties
+
+payment.auth.token_url=https://auth.example.com/token
+payment.auth.client_id=payment-client-id
+payment.auth.client_secret=payment-secret
+payment.auth.grant_type=client_credentials
+
+user.auth.token_url=https://auth.example.com/token
+user.auth.client_id=user-client-id
+user.auth.client_secret=user-secret
+user.auth.grant_type=client_credentials
