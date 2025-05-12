@@ -1,0 +1,86 @@
+package utils;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+
+import java.time.Duration;
+import java.util.*;
+
+public class KafkaMessageUtility {
+
+    private final String bootstrapServers;
+    private final String topic;
+    private final String groupId;
+
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
+    private final ThreadLocal<KafkaConsumer<String, String>> threadLocalConsumer = ThreadLocal.withInitial(() -> {
+        Properties props = new Properties();
+        props.put("bootstrap.servers", bootstrapServers);
+        props.put("group.id", groupId + "-" + Thread.currentThread().getId()); // unique group for parallel
+        props.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+        props.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+        props.put("auto.offset.reset", "latest");
+
+        KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);
+        consumer.subscribe(Collections.singletonList(topic));
+        return consumer;
+    });
+
+    public KafkaMessageUtility(String bootstrapServers, String topic, String groupId) {
+        this.bootstrapServers = bootstrapServers;
+        this.topic = topic;
+        this.groupId = groupId;
+    }
+
+    public String consumeMessage(int timeoutInSeconds) {
+        KafkaConsumer<String, String> consumer = threadLocalConsumer.get();
+        ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(timeoutInSeconds));
+        for (ConsumerRecord<String, String> record : records) {
+            return record.value();
+        }
+        return null;
+    }
+
+    public boolean validateMessageContainsKeyValue(String message, Map<String, String> expectedPairs) {
+        try {
+            JsonNode rootNode = objectMapper.readTree(message);
+            for (Map.Entry<String, String> entry : expectedPairs.entrySet()) {
+                JsonNode node = rootNode.findValue(entry.getKey());
+                if (node == null || !node.asText().equals(entry.getValue())) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            System.err.println("JSON parsing/validation error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public void close() {
+        KafkaConsumer<String, String> consumer = threadLocalConsumer.get();
+        if (consumer != null) {
+            consumer.close();
+            threadLocalConsumer.remove();
+        }
+    }
+}
+-----------------------
+@Then("user validates Kafka message from topic {string}")
+public void validateKafkaMessage(String topic) {
+    KafkaMessageUtility kafkaUtil = new KafkaMessageUtility("localhost:9092", topic, "test-group");
+
+    String message = kafkaUtil.consumeMessage(10);
+
+    Map<String, String> expectedData = new HashMap<>();
+    expectedData.put("status", "APPROVED");
+
+    assertTrue("Expected key-value not found in message",
+        kafkaUtil.validateMessageContainsKeyValue(message, expectedData));
+
+    kafkaUtil.close();
+}
