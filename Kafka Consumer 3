@@ -1,0 +1,105 @@
+package utils;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.kafka.clients.consumer.*;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.PartitionInfo;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.*;
+import java.util.stream.Collectors;
+
+public class KafkaMessageUtility {
+
+    private final String bootstrapServers;
+    private final String topic;
+    private final String groupId;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    private ThreadLocal<KafkaConsumer<String, String>> threadLocalConsumer;
+
+    public KafkaMessageUtility(String bootstrapServers, String topic, String groupId) {
+        this.bootstrapServers = bootstrapServers;
+        this.topic = topic;
+        this.groupId = groupId;
+
+        this.threadLocalConsumer = ThreadLocal.withInitial(() -> {
+            Properties props = new Properties();
+            props.put("bootstrap.servers", this.bootstrapServers);
+            props.put("group.id", this.groupId); // no unique group ID
+            props.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+            props.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+            props.put("auto.offset.reset", "none"); // prevent unexpected offset reset
+            props.put("enable.auto.commit", "false");
+
+            KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);
+
+            // Get all partitions
+            List<PartitionInfo> partitions = consumer.partitionsFor(this.topic);
+            List<TopicPartition> topicPartitions = partitions.stream()
+                    .map(p -> new TopicPartition(p.topic(), p.partition()))
+                    .collect(Collectors.toList());
+
+            consumer.assign(topicPartitions);
+
+            // Calculate timestamp for 1 hour ago
+            long oneHourAgo = Instant.now().minus(Duration.ofHours(1)).toEpochMilli();
+
+            Map<TopicPartition, Long> timestampsToSearch = new HashMap<>();
+            topicPartitions.forEach(tp -> timestampsToSearch.put(tp, oneHourAgo));
+
+            try {
+                Map<TopicPartition, OffsetAndTimestamp> offsets = consumer.offsetsForTimes(timestampsToSearch);
+                for (TopicPartition tp : topicPartitions) {
+                    OffsetAndTimestamp offsetAndTimestamp = offsets.get(tp);
+                    if (offsetAndTimestamp != null) {
+                        consumer.seek(tp, offsetAndTimestamp.offset());
+                    } else {
+                        // No offset found for that time, seek to latest
+                        consumer.seekToEnd(Collections.singletonList(tp));
+                    }
+                }
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to seek offsets by timestamp", e);
+            }
+
+            return consumer;
+        });
+    }
+
+    public String consumeMessage(int timeoutInSeconds) {
+        KafkaConsumer<String, String> consumer = threadLocalConsumer.get();
+        ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(timeoutInSeconds));
+        for (ConsumerRecord<String, String> record : records) {
+            return record.value(); // Return first message
+        }
+        return null;
+    }
+
+    public boolean validateMessageContainsKeyValue(String message, Map<String, String> expectedPairs) {
+        try {
+            JsonNode rootNode = objectMapper.readTree(message);
+            for (Map.Entry<String, String> entry : expectedPairs.entrySet()) {
+                JsonNode node = rootNode.findValue(entry.getKey());
+                if (node == null || !node.asText().equals(entry.getValue())) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            System.err.println("JSON validation failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public void close() {
+        KafkaConsumer<String, String> consumer = threadLocalConsumer.get();
+        if (consumer != null) {
+            consumer.close();
+            threadLocalConsumer.remove();
+        }
+    }
+}
