@@ -1,0 +1,52 @@
+public Object invokeRandomMethod(String methodAndParams) {
+    try {
+        String[] parts = methodAndParams.split("_");
+        String methodName = parts[0];
+        String[] paramValues = Arrays.copyOfRange(parts, 1, parts.length);
+
+        Method[] methods = this.getClass().getDeclaredMethods();
+
+        for (Method method : methods) {
+            if (method.getName().equals(methodName) && method.getParameterCount() == paramValues.length) {
+                Parameter[] parameters = method.getParameters();
+                Object[] convertedParams = new Object[paramValues.length];
+
+                boolean match = true;
+                for (int i = 0; i < paramValues.length; i++) {
+                    String value = paramValues[i];
+                    Class<?> type = parameters[i].getType();
+
+                    if (type == int.class || type == Integer.class) {
+                        try {
+                            convertedParams[i] = Integer.parseInt(value);
+                        } catch (NumberFormatException e) {
+                            match = false;
+                            break;
+                        }
+                    } else if (type == long.class || type == Long.class) {
+                        try {
+                            convertedParams[i] = Long.parseLong(value);
+                        } catch (NumberFormatException e) {
+                            match = false;
+                            break;
+                        }
+                    } else if (type == boolean.class || type == Boolean.class) {
+                        convertedParams[i] = Boolean.parseBoolean(value);
+                    } else {
+                        convertedParams[i] = value;
+                    }
+                }
+
+                if (match) {
+                    method.setAccessible(true);
+                    return method.invoke(this, convertedParams);
+                }
+            }
+        }
+
+        throw new NoSuchMethodException("No matching method found for: " + methodAndParams);
+
+    } catch (Exception e) {
+        throw new RuntimeException("Failed to invoke method: " + methodAndParams, e);
+    }
+}
