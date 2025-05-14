@@ -1,0 +1,122 @@
+package com.yourorg.kafka;
+
+import org.apache.kafka.clients.consumer.*;
+import java.time.Duration;
+import java.util.*;
+import java.util.function.Predicate;
+
+public class KafkaConsumerService {
+
+    private final Properties kafkaProps;
+    private final String topic;
+
+    public KafkaConsumerService(String bootstrapServers,
+                                 String topic,
+                                 String keystorePath,
+                                 String truststorePath,
+                                 String keystorePass,
+                                 String truststorePass,
+                                 String keyPass) throws Exception {
+        this.kafkaProps = KafkaSSLUtil.getKafkaSSLProperties(
+                bootstrapServers, keystorePath, truststorePath,
+                keystorePass, truststorePass, keyPass
+        );
+        this.topic = topic;
+    }
+
+    public Optional<String> waitForMessage(Predicate<String> filter, int timeoutSeconds) {
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(kafkaProps)) {
+            consumer.subscribe(Collections.singletonList(topic));
+            long endTime = System.currentTimeMillis() + timeoutSeconds * 1000L;
+            while (System.currentTimeMillis() < endTime) {
+                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
+                for (ConsumerRecord<String, String> record : records) {
+                    if (filter.test(record.value())) {
+                        return Optional.of(record.value());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return Optional.empty();
+    }
+}
+----------------------------------
+package com.yourorg.kafka;
+
+import java.io.*;
+import java.util.Properties;
+
+public class KafkaSSLUtil {
+
+    public static Properties getKafkaSSLProperties(
+            String bootstrapServers,
+            String keystorePath,
+            String truststorePath,
+            String keystorePassword,
+            String truststorePassword,
+            String keyPassword
+    ) throws IOException {
+
+        File keystore = copyToTemp(keystorePath);
+        File truststore = copyToTemp(truststorePath);
+
+        Properties props = new Properties();
+        props.put("bootstrap.servers", bootstrapServers);
+        props.put("security.protocol", "SSL");
+        props.put("ssl.keystore.location", keystore.getAbsolutePath());
+        props.put("ssl.keystore.password", keystorePassword);
+        props.put("ssl.key.password", keyPassword);
+        props.put("ssl.truststore.location", truststore.getAbsolutePath());
+        props.put("ssl.truststore.password", truststorePassword);
+        props.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+        props.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+        props.put("group.id", "your-kafka-consumer-group");
+        props.put("auto.offset.reset", "latest");
+        return props;
+    }
+
+    private static File copyToTemp(String path) throws IOException {
+        InputStream in = KafkaSSLUtil.class.getClassLoader().getResourceAsStream(path);
+        if (in == null) throw new FileNotFoundException("Could not find resource: " + path);
+        File temp = File.createTempFile("cert", ".jks");
+        temp.deleteOnExit();
+        try (OutputStream out = new FileOutputStream(temp)) {
+            in.transferTo(out);
+        }
+        return temp;
+    }
+}
+--------------------
+@Then("Kafka message for reference {string} should contain:")
+public void validateMessage(String ref, DataTable table) throws Exception {
+    Map<String, String> expected = table.asMap();
+
+    KafkaConsumerService service = new KafkaConsumerService(
+        "kafka.server.com:9093",
+        "your-topic",
+        "certificates/keystore.jks",
+        "certificates/truststore.jks",
+        "changeit", "changeit", "changeit"
+    );
+
+    Optional<String> message = service.waitForMessage(
+        msg -> msg.contains(ref),
+        30
+    );
+
+    if (message.isEmpty()) {
+        throw new AssertionError("Message with ref " + ref + " not found.");
+    }
+
+    ObjectMapper mapper = new ObjectMapper();
+    JsonNode actual = mapper.readTree(message.get());
+
+    for (Map.Entry<String, String> e : expected.entrySet()) {
+        JsonNode value = actual.at("/" + e.getKey().replace(".", "/"));
+        if (value.isMissingNode() || !value.asText().equals(e.getValue())) {
+            throw new AssertionError("Mismatch for key: " + e.getKey());
+        }
+    }
+}
