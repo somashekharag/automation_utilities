@@ -1,0 +1,87 @@
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public class PDFUtils {
+
+    /**
+     * Extract text, optionally sorting by position.
+     */
+    public static String extractText(String filePath, boolean sortByPosition) throws IOException {
+        try (PDDocument document = PDDocument.load(new File(filePath))) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(sortByPosition);
+            return stripper.getText(document);
+        }
+    }
+
+    /**
+     * The one-stop-shop validator: resolves placeholders,
+     * flattens whitespace, and tries multiple matching strategies.
+     */
+    public static boolean validateContent(String filePath,
+                                          String expectedTemplate,
+                                          Map<String,String> contextMap) throws IOException {
+        // 1. Extract both ways
+        String rawText    = extractText(filePath, false);
+        String sortedText = extractText(filePath, true);
+
+        // 2. Resolve any ${placeholders}
+        String resolved = resolvePlaceholders(expectedTemplate, contextMap);
+
+        // 3. Flatten (remove extra whitespace & line breaks)
+        String flatRaw    = flatten(resolvedText(rawText));
+        String flatSorted = flatten(resolvedText(sortedText));
+        String flatExpect = flatten(resolved);
+
+        // 4a. Simple contains check
+        if (flatSorted.contains(flatExpect) || flatRaw.contains(flatExpect)) {
+            return true;
+        }
+
+        // 4b. Regex-DOTALL search
+        String dotallRegex = Pattern.quote(flatExpect);
+        if (Pattern.compile(dotallRegex, Pattern.DOTALL).matcher(flatSorted).find()
+         || Pattern.compile(dotallRegex, Pattern.DOTALL).matcher(flatRaw).find()) {
+            return true;
+        }
+
+        // 4c. If you want a label→value in-order match,
+        //     you can build a dynamic regex here too:
+        // String inOrder = Pattern.quote(resolved) + ".*?" + Pattern.quote(contextMap.get("yourKey"));
+        // if (Pattern.compile(inOrder, Pattern.DOTALL).matcher(flatSorted).find()) { ... }
+
+        // nothing worked
+        return false;
+    }
+
+    /** Normalize line ends and collapse whitespace to single spaces. */
+    private static String flatten(String text) {
+        return text
+            .replaceAll("\\r\\n?", " ")
+            .replaceAll("\\n", " ")
+            .replaceAll("\\s+", " ")
+            .trim();
+    }
+
+    /** Replace ${key} with contextMap.get(key), or throw if missing. */
+    private static String resolvePlaceholders(String text, Map<String,String> contextMap) {
+        Matcher m = Pattern.compile("\\$\\{(\\w+)}").matcher(text);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            String key = m.group(1);
+            String val = contextMap.get(key);
+            if (val == null) {
+                throw new IllegalArgumentException("Missing context for placeholder: " + key);
+            }
+            m.appendReplacement(sb, Matcher.quoteReplacement(val));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+}
