@@ -1,0 +1,57 @@
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public class PDFUtils {
+
+    // ... (other methods like extractTextFromPDF, flattenAndTrim, etc.)
+
+    public static boolean containsResolvedText(String pdfText, String expectedTextWithPlaceholders, Map<String, String> contextMap) {
+        String resolvedText = resolvePlaceholders(expectedTextWithPlaceholders, contextMap);
+        String normalizedPdfText = flattenAndTrim(pdfText);
+        String normalizedExpected = flattenAndTrim(resolvedText);
+        return normalizedPdfText.contains(normalizedExpected);
+    }
+
+    private static String resolvePlaceholders(String text, Map<String, String> contextMap) {
+        Pattern pattern = Pattern.compile("\\$\\{(\\w+)}");
+        Matcher matcher = pattern.matcher(text);
+        StringBuffer sb = new StringBuffer();
+        while (matcher.find()) {
+            String key = matcher.group(1);
+            String value = contextMap.getOrDefault(key, "");
+            matcher.appendReplacement(sb, Matcher.quoteReplacement(value));
+        }
+        matcher.appendTail(sb);
+        return sb.toString();
+    }
+
+    private static String flattenAndTrim(String text) {
+        return text
+            .replaceAll("\\r\\n?", " ")
+            .replaceAll("\\n", " ")
+            .replaceAll("\\s+", " ")
+            .trim();
+    }
+}
+
+‐----------
+@Given("the PDF at path {string} contains the dynamic content:")
+public void validateDynamicPdfContent(String filePath, String expectedText) throws IOException {
+    String pdfText = PDFUtils.extractTextFromPDF(filePath);
+    boolean result = PDFUtils.containsResolvedText(pdfText, expectedText, ScenarioContext.getContextMap());
+    Assert.assertTrue("Expected dynamic content not found in PDF", result);
+}
+--------
+Scenario: Validate loan approval letter
+  Given the loanAmount is "25000"
+  And the PDF at path "src/test/resources/loan-letter.pdf" contains the dynamic content:
+  """
+  Congratulations!
+  Your loan of $${loanAmount} has been approved.
+  """
+--------
+@Given("the loanAmount is {string}")
+public void setLoanAmount(String amount) {
+    ScenarioContext.set("loanAmount", amount);
+}
