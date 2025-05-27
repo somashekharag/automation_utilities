@@ -1,0 +1,159 @@
+public class PDFUtils {
+
+    private static final ThreadLocal<PDFTextStripper> stripper = ThreadLocal.withInitial(() -> {
+        try {
+            return new PDFTextStripper();
+        } catch (IOException e) {
+            throw new RuntimeException("Error initializing PDFTextStripper", e);
+        }
+    });
+
+    private PDFUtils() {}
+
+    public static String extractText(String filePath, boolean sort) {
+        return extractTextFromPages(filePath, sort, -1, -1);
+    }
+
+    public static String extractTextFromPages(String filePath, boolean sort, int startPage, int endPage) {
+        try (PDDocument doc = PDDocument.load(new File(filePath))) {
+            PDFTextStripper localStripper = stripper.get();
+            localStripper.setSortByPosition(sort);
+            if (startPage > 0) localStripper.setStartPage(startPage);
+            if (endPage > 0) localStripper.setEndPage(endPage);
+            return localStripper.getText(doc);
+        } catch (IOException e) {
+            throw new RuntimeException("Error reading PDF", e);
+        }
+    }
+
+    public static String normalizeText(String input) {
+        return input.replaceAll("\\s+", " ") // remove all extra whitespaces
+                    .replaceAll("\\s*([,.:$])\\s*", "$1") // clean up symbols
+                    .trim();
+    }
+
+    public static String extractSection(String content, String startMarker, String endMarker) {
+        int startIndex = content.indexOf(startMarker);
+        if (startIndex == -1) return "";
+        startIndex += startMarker.length();
+        int endIndex = (endMarker != null) ? content.indexOf(endMarker, startIndex) : -1;
+        return (endIndex != -1) ? content.substring(startIndex, endIndex) : content.substring(startIndex);
+    }
+
+    public static String resolvePlaceholders(String expectedText, Map<String, String> contextMap) {
+        String resolved = expectedText;
+        for (Map.Entry<String, String> entry : contextMap.entrySet()) {
+            resolved = resolved.replace("${" + entry.getKey() + "}", entry.getValue());
+        }
+        return resolved;
+    }
+
+    public static void printDiff(String expected, String actual) {
+        System.out.println("Expected: " + expected);
+        System.out.println("Actual  : " + actual);
+    }
+}
+---------------
+@When("user prints full content from {string} with sort {string}")
+public void printFullPDF(String filePath, String sortFlag) {
+    boolean sort = Boolean.parseBoolean(sortFlag);
+    String content = PDFUtils.extractText(filePath, sort);
+    System.out.println("PDF Content:\n" + content);
+}
+
+@When("user prints content from page {int} of {string} with sort {string}")
+public void printSinglePage(int page, String filePath, String sortFlag) {
+    boolean sort = Boolean.parseBoolean(sortFlag);
+    String content = PDFUtils.extractTextFromPages(filePath, sort, page, page);
+    System.out.println("Page " + page + " Content:\n" + content);
+}
+
+@When("user prints content from pages {int} to {int} of {string} with sort {string}")
+public void printPageRange(int start, int end, String filePath, String sortFlag) {
+    boolean sort = Boolean.parseBoolean(sortFlag);
+    String content = PDFUtils.extractTextFromPages(filePath, sort, start, end);
+    System.out.println("Pages " + start + "-" + end + " Content:\n" + content);
+}
+
+@When("user prints normalized content from {string} with sort {string}")
+public void printNormalizedContent(String filePath, String sortFlag) {
+    boolean sort = Boolean.parseBoolean(sortFlag);
+    String raw = PDFUtils.extractText(filePath, sort);
+    String normalized = PDFUtils.normalizeText(raw);
+    System.out.println("Normalized Content:\n" + normalized);
+}
+
+@When("user prints content between {string} and {string} from {string} with sort {string}")
+public void printSection(String start, String end, String filePath, String sortFlag) {
+    boolean sort = Boolean.parseBoolean(sortFlag);
+    String full = PDFUtils.extractText(filePath, sort);
+    String section = PDFUtils.extractSection(full, start, end);
+    System.out.println("Section Between:\n" + section);
+}
+
+@Then("validate paragraph in {string} with sort {string} matches expected text with placeholders")
+public void validateParagraph(String filePath, String sortFlag, DataTable dataTable) {
+    boolean sort = Boolean.parseBoolean(sortFlag);
+    String actual = PDFUtils.normalizeText(PDFUtils.extractText(filePath, sort));
+    Map<String, String> context = ScenarioContext.getAll(); // hypothetical thread-safe context store
+    String expected = dataTable.asList().get(0); // Assume paragraph in first row
+    String resolved = PDFUtils.resolvePlaceholders(expected, context);
+    resolved = PDFUtils.normalizeText(resolved);
+    if (!actual.contains(resolved)) {
+        PDFUtils.printDiff(resolved, actual);
+        throw new AssertionError("Expected paragraph not found in PDF.");
+    }
+}
+---------
+Feature: PDF Content Extraction and Validation
+
+  Background:
+    Given the test context is initialized with the following values
+      | loanAmount | $9,876.00 |
+      | customerId | 123456    |
+
+  Scenario: Print full PDF content without sort
+    When user prints full content from "files/sample.pdf" with sort "false"
+
+  Scenario: Print full PDF content with sort
+    When user prints full content from "files/sample.pdf" with sort "true"
+
+  Scenario: Print content from specific page without sort
+    When user prints content from page 2 of "files/sample.pdf" with sort "false"
+
+  Scenario: Print content from specific page with sort
+    When user prints content from page 2 of "files/sample.pdf" with sort "true"
+
+  Scenario: Print content from a range of pages with sort
+    When user prints content from pages 1 to 3 of "files/sample.pdf" with sort "true"
+
+  Scenario: Print normalized content without sort
+    When user prints normalized content from "files/sample.pdf" with sort "false"
+
+  Scenario: Print normalized content with sort
+    When user prints normalized content from "files/sample.pdf" with sort "true"
+
+  Scenario: Print content between two markers without sort
+    When user prints content between "Loan Summary" and "Repayment Schedule" from "files/sample.pdf" with sort "false"
+
+  Scenario: Print content between two markers with sort
+    When user prints content between "Loan Summary" and "Repayment Schedule" from "files/sample.pdf" with sort "true"
+
+  Scenario: Validate static paragraph within PDF content
+    Then validate paragraph in "files/sample.pdf" with sort "false" matches expected text with placeholders
+      | Dear Customer, your loan is approved for $9,876.00. |
+
+  Scenario: Validate dynamic paragraph with placeholder substitution
+    Then validate paragraph in "files/sample.pdf" with sort "false" matches expected text with placeholders
+      | Dear Customer, your loan is approved for ${loanAmount}. Your ID is ${customerId}. |
+
+  Scenario: Validate content section between markers
+    Given user extracts content between "Loan Summary" and "Repayment Schedule" from "files/sample.pdf" with sort "false"
+    Then validate paragraph in extracted section matches expected text with placeholders
+      | Your loan number is ${customerId}. |
+
+  Scenario: Print difference when actual and expected do not match
+    Then validate paragraph in "files/sample.pdf" with sort "false" matches expected text with placeholders
+      | This is an intentionally incorrect text to trigger difference print. |
+
+
