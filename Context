@@ -1,0 +1,43 @@
+import java.util.HashMap;
+import java.util.Map;
+
+public class NGContext {
+
+    private static final ThreadLocal<Map<String, Object>> context = ThreadLocal.withInitial(HashMap::new);
+
+    private NGContext() {
+        // Utility class
+    }
+
+    public static void put(String key, Object value) {
+        context.get().put(key, value);
+    }
+
+    public static Object get(String key) {
+        return context.get().get(key);
+    }
+
+    public static <T> T get(String key, Class<T> clazz) {
+        Object value = get(key);
+        if (value != null && clazz.isInstance(value)) {
+            return clazz.cast(value);
+        }
+        return null;
+    }
+
+    public static void remove(String key) {
+        context.get().remove(key);
+    }
+
+    public static void clear() {
+        context.get().clear();
+    }
+
+    public static boolean containsKey(String key) {
+        return context.get().containsKey(key);
+    }
+
+    public static Map<String, Object> getAll() {
+        return new HashMap<>(context.get());
+    }
+}
