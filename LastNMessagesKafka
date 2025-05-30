@@ -1,0 +1,74 @@
+import org.apache.kafka.clients.consumer.*;
+import org.apache.kafka.common.TopicPartition;
+
+import java.time.Duration;
+import java.util.*;
+
+public class KafkaLastMessagesReader {
+
+    private static final String TOPIC = "your-topic-name";
+    private static final int LAST_N_MESSAGES = 10;
+
+    public static void main(String[] args) {
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "dummy-group"); // Not important here
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+            // Get partitions for topic
+            List<PartitionInfo> partitionInfos = consumer.partitionsFor(TOPIC);
+            List<TopicPartition> topicPartitions = new ArrayList<>();
+            for (PartitionInfo partitionInfo : partitionInfos) {
+                topicPartitions.add(new TopicPartition(TOPIC, partitionInfo.partition()));
+            }
+
+            // Assign manually
+            consumer.assign(topicPartitions);
+
+            // Fetch beginning and end offsets
+            consumer.seekToEnd(topicPartitions);
+            Map<TopicPartition, Long> endOffsets = new HashMap<>();
+            for (TopicPartition tp : topicPartitions) {
+                endOffsets.put(tp, consumer.position(tp));
+            }
+
+            consumer.seekToBeginning(topicPartitions);
+            Map<TopicPartition, Long> beginningOffsets = new HashMap<>();
+            for (TopicPartition tp : topicPartitions) {
+                beginningOffsets.put(tp, consumer.position(tp));
+            }
+
+            // Calculate where to seek
+            for (TopicPartition tp : topicPartitions) {
+                long endOffset = endOffsets.get(tp);
+                long beginningOffset = beginningOffsets.get(tp);
+                long offsetToSeek = Math.max(beginningOffset, endOffset - LAST_N_MESSAGES);
+                consumer.seek(tp, offsetToSeek);
+            }
+
+            // Collect messages
+            List<ConsumerRecord<String, String>> allRecords = new ArrayList<>();
+            long pollEndTime = System.currentTimeMillis() + 5000;
+            while (System.currentTimeMillis() < pollEndTime && allRecords.size() < LAST_N_MESSAGES) {
+                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
+                for (ConsumerRecord<String, String> record : records) {
+                    allRecords.add(record);
+                }
+            }
+
+            // Sort by timestamp or offset and get last 10
+            allRecords.sort(Comparator.comparingLong(ConsumerRecord::offset));
+            int start = Math.max(allRecords.size() - LAST_N_MESSAGES, 0);
+            List<ConsumerRecord<String, String>> lastRecords = allRecords.subList(start, allRecords.size());
+
+            // Print the records
+            for (ConsumerRecord<String, String> record : lastRecords) {
+                System.out.printf("Partition: %d, Offset: %d, Key: %s, Value: %s%n",
+                        record.partition(), record.offset(), record.key(), record.value());
+            }
+        }
+    }
+}
