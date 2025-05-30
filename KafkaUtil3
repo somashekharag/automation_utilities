@@ -1,0 +1,70 @@
+import org.apache.kafka.clients.consumer.*;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.time.Duration;
+import java.util.*;
+
+public class KafkaMessageFetcher {
+
+    private static final ObjectMapper mapper = new ObjectMapper();
+
+    public static String waitForMessage(String bootstrapServers,
+                                        String topic,
+                                        String jsonKey,
+                                        String expectedValue,
+                                        int maxRecordsToCheck) {
+
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "wait-for-message-" + UUID.randomUUID());
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+            List<TopicPartition> partitions = new ArrayList<>();
+            for (PartitionInfo partitionInfo : consumer.partitionsFor(topic)) {
+                partitions.add(new TopicPartition(topic, partitionInfo.partition()));
+            }
+            consumer.assign(partitions);
+            consumer.seekToEnd(partitions);
+
+            Map<TopicPartition, Long> endOffsets = new HashMap<>();
+            for (TopicPartition tp : partitions) {
+                endOffsets.put(tp, consumer.position(tp));
+            }
+
+            for (TopicPartition tp : partitions) {
+                long currentOffset = endOffsets.get(tp);
+                int checked = 0;
+
+                while (currentOffset > 0 && checked < maxRecordsToCheck) {
+                    currentOffset--;
+                    consumer.seek(tp, currentOffset);
+                    ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
+
+                    for (ConsumerRecord<String, String> record : records) {
+                        String message = record.value();
+                        try {
+                            JsonNode jsonNode = mapper.readTree(message);
+                            if (jsonNode.has(jsonKey) && jsonNode.get(jsonKey).asText().equals(expectedValue)) {
+                                return message;
+                            }
+                        } catch (Exception e) {
+                            System.err.println("Invalid JSON: " + e.getMessage());
+                        }
+                        checked++;
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+
+        return null;
+    }
+}
