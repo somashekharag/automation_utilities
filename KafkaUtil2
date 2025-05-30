@@ -1,0 +1,58 @@
+import org.apache.kafka.clients.consumer.*;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.serialization.StringDeserializer;
+
+import java.time.Duration;
+import java.util.*;
+
+public class LatestMatchingKafkaRecord {
+
+    public static void main(String[] args) {
+        String topic = "your-topic";
+        String keyword = "ABC123"; // keyword to match in message value
+
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "your.kafka.server:9092");
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "fetch-latest-matching-" + UUID.randomUUID());
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+            List<TopicPartition> partitions = new ArrayList<>();
+            for (PartitionInfo partitionInfo : consumer.partitionsFor(topic)) {
+                partitions.add(new TopicPartition(topic, partitionInfo.partition()));
+            }
+            consumer.assign(partitions);
+
+            // Seek to the end of each partition
+            consumer.seekToEnd(partitions);
+            Map<TopicPartition, Long> endOffsets = new HashMap<>();
+            for (TopicPartition tp : partitions) {
+                endOffsets.put(tp, consumer.position(tp));
+            }
+
+            // Scan backwards for each partition
+            for (TopicPartition tp : partitions) {
+                long offset = endOffsets.get(tp);
+                while (offset > 0) {
+                    offset--;
+                    consumer.seek(tp, offset);
+                    ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
+                    for (ConsumerRecord<String, String> record : records) {
+                        if (record.value() != null && record.value().contains(keyword)) {
+                            System.out.println("✅ Found latest matching record:");
+                            System.out.println("Partition: " + tp.partition());
+                            System.out.println("Offset: " + record.offset());
+                            System.out.println("Timestamp: " + record.timestamp());
+                            System.out.println("Value: " + record.value());
+                            return;
+                        }
+                    }
+                }
+            }
+
+            System.out.println("❌ No matching record found with keyword: " + keyword);
+        }
+    }
+}
