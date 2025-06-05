@@ -1,51 +1,59 @@
-package com.example.octane;
+package com.example.octane.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PreDestroy;
+import org.apache.http.HttpHost;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.CookieStore;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.protocol.HttpClientContext;
-import org.apache.http.cookie.ClientCookie;
 import org.apache.http.cookie.Cookie;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.*;
+import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.util.HashMap;
 import java.util.Map;
 
+@Component
 public class OctaneRestClient {
 
-    private final String baseUrl;
-    private final String clientId;
-    private final String clientSecret;
-    private final CloseableHttpClient httpClient;
-    private final CookieStore cookieStore;
-    private final HttpClientContext context;
+    private CloseableHttpClient httpClient;
+    private CookieStore cookieStore;
+    private HttpClientContext context;
+    private String lwssoCookieKey;
 
-    public OctaneRestClient(String baseUrl, String clientId, String clientSecret) {
-        this.baseUrl = baseUrl;
-        this.clientId = clientId;
-        this.clientSecret = clientSecret;
-        this.cookieStore = new BasicCookieStore();
-        this.context = HttpClientContext.create();
-        this.context.setCookieStore(cookieStore);
-        this.httpClient = HttpClients.custom().setDefaultCookieStore(cookieStore).build();
+    public void initialize(String baseUrl, String clientId, String clientSecret, String proxyHost, int proxyPort) {
+        try {
+            this.cookieStore = new BasicCookieStore();
+            this.context = HttpClientContext.create();
+            this.context.setCookieStore(cookieStore);
+
+            HttpHost proxy = new HttpHost(proxyHost, proxyPort);
+            this.httpClient = HttpClientBuilder.create()
+                    .setProxy(proxy)
+                    .setDefaultCookieStore(cookieStore)
+                    .build();
+
+            authenticate(baseUrl, clientId, clientSecret);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize OctaneRestClient", e);
+        }
     }
 
-    public boolean authenticate() {
+    private void authenticate(String baseUrl, String clientId, String clientSecret) {
         try {
             String url = baseUrl + "/authentication/sign_in";
             HttpPost post = new HttpPost(url);
             post.setHeader("Content-Type", "application/json");
 
-            Map<String, String> authPayload = new HashMap<>();
-            authPayload.put("client_id", clientId);
-            authPayload.put("client_secret", clientSecret);
+            Map<String, String> payload = new HashMap<>();
+            payload.put("client_id", clientId);
+            payload.put("client_secret", clientSecret);
 
-            ObjectMapper mapper = new ObjectMapper();
-            StringEntity entity = new StringEntity(mapper.writeValueAsString(authPayload));
+            StringEntity entity = new StringEntity(new ObjectMapper().writeValueAsString(payload));
             post.setEntity(entity);
 
             HttpResponse response = httpClient.execute(post, context);
@@ -54,55 +62,69 @@ public class OctaneRestClient {
             if (statusCode == 200) {
                 for (Cookie cookie : cookieStore.getCookies()) {
                     if ("LWSSO_COOKIE_KEY".equals(cookie.getName())) {
-                        System.out.println("Authenticated successfully. LWSSO_COOKIE_KEY: " + cookie.getValue());
-                        return true;
+                        lwssoCookieKey = cookie.getValue();
+                        return;
                     }
                 }
+                throw new RuntimeException("LWSSO_COOKIE_KEY not found after authentication");
             } else {
-                System.err.println("Authentication failed. Status code: " + statusCode);
                 BufferedReader reader = new BufferedReader(new InputStreamReader(response.getEntity().getContent()));
-                reader.lines().forEach(System.out::println);
+                StringBuilder responseBody = new StringBuilder();
+                reader.lines().forEach(line -> responseBody.append(line).append("\n"));
+                throw new RuntimeException("Authentication failed: " + statusCode + "\n" + responseBody);
             }
+
         } catch (Exception e) {
-            e.printStackTrace();
+            throw new RuntimeException("Authentication to Octane failed", e);
         }
-
-        return false;
     }
 
-    public String getCookie(String name) {
-        return cookieStore.getCookies().stream()
-                .filter(cookie -> cookie.getName().equals(name))
-                .map(Cookie::getValue)
-                .findFirst()
-                .orElse(null);
+    public String getLwssoCookieKey() {
+        return lwssoCookieKey;
     }
 
-    public CookieStore getCookieStore() {
-        return cookieStore;
+    public CloseableHttpClient getHttpClient() {
+        return httpClient;
     }
 
     public HttpClientContext getContext() {
         return context;
     }
 
-    public CloseableHttpClient getHttpClient() {
-        return httpClient;
+    @PreDestroy
+    public void close() {
+        try {
+            if (httpClient != null) httpClient.close();
+        } catch (Exception ignored) {
+        }
     }
 }
+----------
+package com.example.octane.service;
 
----------
-public class OctaneTest {
-    public static void main(String[] args) {
-        String baseUrl = "http://octane-server.company.com"; // No port if default
-        String clientId = "your-client-id";
-        String clientSecret = "your-client-secret";
+import com.example.octane.client.OctaneRestClient;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
-        OctaneRestClient client = new OctaneRestClient(baseUrl, clientId, clientSecret);
-        if (client.authenticate()) {
-            String lwsso = client.getCookie("LWSSO_COOKIE_KEY");
-            System.out.println("Session cookie: " + lwsso);
-        }
+@Service
+public class OctaneRestService {
+
+    private final OctaneRestClient restClient;
+
+    @Autowired
+    public OctaneRestService(OctaneRestClient restClient) {
+        this.restClient = restClient;
+    }
+
+    public void connectToOctane(String baseUrl, String clientId, String clientSecret) {
+        // Optional: externalize these values from application.properties or vault
+        String proxyHost = "proxy.company.com";
+        int proxyPort = 8080;
+
+        restClient.initialize(baseUrl, clientId, clientSecret, proxyHost, proxyPort);
+
+        String cookie = restClient.getLwssoCookieKey();
+        System.out.println("Authenticated with Octane. LWSSO_COOKIE_KEY: " + cookie);
     }
 }
 
