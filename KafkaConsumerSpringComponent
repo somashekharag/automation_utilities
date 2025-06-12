@@ -1,0 +1,98 @@
+package com.yourcompany.kafka.service;
+
+import com.yourcompany.kafka.config.KafkaProperties;
+import org.apache.kafka.clients.consumer.*;
+import org.apache.kafka.common.TopicPartition;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.time.Duration;
+import java.util.*;
+import java.util.stream.StreamSupport;
+
+@Service
+public class KafkaMessageFetcherService {
+
+    @Autowired
+    private KafkaProperties kafkaProperties;
+
+    public Optional<String> fetchLatestMessageContainingKeyword(String keyword) {
+        String topic = kafkaProperties.getTopic();
+        List<String> group1 = kafkaProperties.getGroup1Brokers();
+        List<String> group2 = kafkaProperties.getGroup2Brokers();
+        String groupIdPrefix = kafkaProperties.getGroupIdPrefix();
+
+        Optional<String> result = fetchFromBrokers(topic, keyword, group1, groupIdPrefix);
+        if (result.isPresent()) return result;
+
+        return fetchFromBrokers(topic, keyword, group2, groupIdPrefix);
+    }
+
+    private Optional<String> fetchFromBrokers(
+            String topic, String keyword, List<String> brokers, String groupIdPrefix
+    ) {
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, String.join(",", brokers));
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, groupIdPrefix + "-" + UUID.randomUUID());
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+            List<PartitionInfo> partitions = consumer.partitionsFor(topic);
+            List<TopicPartition> topicPartitions = new ArrayList<>();
+            for (PartitionInfo pi : partitions) {
+                topicPartitions.add(new TopicPartition(topic, pi.partition()));
+            }
+
+            consumer.assign(topicPartitions);
+            consumer.poll(Duration.ofMillis(300)); // metadata refresh
+
+            Map<TopicPartition, Long> endOffsets = consumer.endOffsets(topicPartitions);
+            for (TopicPartition tp : topicPartitions) {
+                long end = endOffsets.getOrDefault(tp, 0L);
+                if (end > 0) consumer.seek(tp, end - 1);
+            }
+
+            ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(2));
+            return StreamSupport.stream(records.spliterator(), false)
+                    .filter(r -> r.value() != null && r.value().contains(keyword))
+                    .sorted(Comparator.comparingLong(ConsumerRecord::timestamp).reversed())
+                    .map(ConsumerRecord::value)
+                    .findFirst();
+
+        } catch (Exception e) {
+            System.err.println("Kafka error from brokers [" + String.join(",", brokers) + "]: " + e.getMessage());
+            return Optional.empty();
+        }
+    }
+}
+
+‐--------
+@Autowired
+KafkaMessageFetcherService kafkaService;
+
+@Test
+void testKafkaMessageContainsKeyword() {
+    Optional<String> msg = kafkaService.fetchLatestMessageContainingKeyword("success");
+    assertTrue(msg.isPresent(), "Expected message containing 'success'");
+}
+--------
+package com.yourcompany.kafka.config;
+
+import lombok.Data;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+@Data
+@Component
+@ConfigurationProperties(prefix = "kafka")
+public class KafkaProperties {
+    private String topic;
+    private String groupIdPrefix;
+    private List<String> group1Brokers;
+    private List<String> group2Brokers;
+}
