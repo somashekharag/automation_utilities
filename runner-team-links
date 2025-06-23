@@ -1,0 +1,101 @@
+@RestController
+@RequestMapping("/api/teams")
+public class TeamLinkController {
+
+    private final TeamLinkConfig config;
+
+    public TeamLinkController(TeamLinkConfig config) {
+        this.config = config;
+    }
+
+    @GetMapping("/runner-links")
+    public ResponseEntity<List<Map<String, String>>> getTeamRunnerLinks() {
+        Map<String, String> links = config.getTeamLinks();
+        if (links.isEmpty()) {
+            return ResponseEntity.ok(Collections.emptyList());
+        }
+
+        List<Map<String, String>> result = links.entrySet().stream()
+            .map(entry -> Map.of("team", entry.getKey(), "link", entry.getValue()))
+            .collect(Collectors.toList());
+
+        return ResponseEntity.ok(result);
+    }
+}
+‐-----------
+import React, { useEffect, useState } from 'react';
+
+const TeamLinksTable = () => {
+  const [teamLinks, setTeamLinks] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/teams/runner-links')
+      .then(res => res.json())
+      .then(data => {
+        setTeamLinks(data);
+        setLoading(false);
+      })
+      .catch(() => {
+        setTeamLinks([]);
+        setLoading(false);
+      });
+  }, []);
+
+  if (loading) return <p className="text-gray-500">Loading team runner pages...</p>;
+
+  if (teamLinks.length === 0) {
+    return <p className="text-red-500">No team runner pages configured.</p>;
+  }
+
+  return (
+    <div className="overflow-x-auto p-4">
+      <table className="min-w-full table-auto border border-gray-300 shadow-md">
+        <thead className="bg-gray-200">
+          <tr>
+            <th className="px-4 py-2 text-left">Team</th>
+            <th className="px-4 py-2 text-left">Runner Page</th>
+          </tr>
+        </thead>
+        <tbody>
+          {teamLinks.map(({ team, link }) => (
+            <tr key={team} className="border-t">
+              <td className="px-4 py-2 font-medium">{team}</td>
+              <td className="px-4 py-2 text-blue-600">
+                <a href={link} target="_blank" rel="noopener noreferrer" className="underline">
+                  {link}
+                </a>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+export default TeamLinksTable;
+
+----------
+@Component
+@PropertySource("classpath:config.properties")
+public class TeamLinkConfig {
+
+    @Value("${team.runner.links:}")
+    private String teamLinks;
+
+    public Map<String, String> getTeamLinks() {
+        Map<String, String> map = new LinkedHashMap<>();
+        if (teamLinks == null || teamLinks.isEmpty()) return map;
+
+        String[] entries = teamLinks.split(",");
+        for (String entry : entries) {
+            String[] kv = entry.split("=", 2);
+            if (kv.length == 2) {
+                map.put(kv[0].trim(), kv[1].trim());
+            }
+        }
+        return map;
+    }
+}
+
