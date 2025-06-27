@@ -1,0 +1,54 @@
+import io.appium.java_client.android.AndroidDriver;
+import io.appium.java_client.android.AndroidElement;
+import io.appium.java_client.AppiumBy;
+import org.openqa.selenium.WebElement;
+import java.util.List;
+
+public class NotificationUtils {
+
+    private AndroidDriver<AndroidElement> driver;
+
+    public NotificationUtils(AndroidDriver<AndroidElement> driver) {
+        this.driver = driver;
+    }
+
+    public void printAllNotificationMessages() {
+        try {
+            // Step 1: Open the notification drawer
+            driver.openNotifications();
+
+            // Step 2: Wait briefly to allow notifications to render
+            Thread.sleep(2000);
+
+            // Step 3: Locate all notifications
+            List<AndroidElement> notifications = driver.findElements(
+                AppiumBy.xpath("//android.widget.TextView")
+            );
+
+            System.out.println("==== Notification Messages ====");
+            for (WebElement notification : notifications) {
+                String text = notification.getText().trim();
+                if (!text.isEmpty()) {
+                    System.out.println("Text: " + text);
+                    System.out.println("Locator: XPath - " + buildLocator(notification));
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error while reading notifications: " + e.getMessage());
+        }
+    }
+
+    // Helper method to extract a basic locator (optional)
+    private String buildLocator(WebElement element) {
+        try {
+            String className = element.getAttribute("className");
+            String resourceId = element.getAttribute("resourceId");
+            String contentDesc = element.getAttribute("content-desc");
+
+            return String.format("[class=%s, resource-id=%s, content-desc=%s]",
+                    className, resourceId, contentDesc);
+        } catch (Exception e) {
+            return "Unable to get locator info";
+        }
+    }
+}
