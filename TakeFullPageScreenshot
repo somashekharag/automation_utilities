@@ -1,0 +1,40 @@
+import org.openqa.selenium.chrome.ChromeDriver;
+import org.openqa.selenium.chrome.ChromeOptions;
+
+import java.io.FileOutputStream;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
+
+public class FullPageScreenshotCDPGeneric {
+    public static void main(String[] args) throws Exception {
+        ChromeOptions options = new ChromeOptions();
+        ChromeDriver driver = new ChromeDriver(options);
+
+        driver.get("https://example.com");
+
+        Map<String, Object> metrics = driver.executeCdpCommand("Page.getLayoutMetrics", new HashMap<>());
+        Number width = (Number) ((Map<String, Object>) metrics.get("contentSize")).get("width");
+        Number height = (Number) ((Map<String, Object>) metrics.get("contentSize")).get("height");
+
+        Map<String, Object> clip = new HashMap<>();
+        clip.put("x", 0);
+        clip.put("y", 0);
+        clip.put("width", width);
+        clip.put("height", height);
+        clip.put("scale", 1);
+
+        Map<String, Object> params = new HashMap<>();
+        params.put("format", "png");
+        params.put("clip", clip);
+
+        Map<String, Object> screenshot = driver.executeCdpCommand("Page.captureScreenshot", params);
+        byte[] imageBytes = Base64.getDecoder().decode(screenshot.get("data").toString());
+
+        try (FileOutputStream stream = new FileOutputStream("high-quality-fullpage.png")) {
+            stream.write(imageBytes);
+        }
+
+        driver.quit();
+    }
+}
