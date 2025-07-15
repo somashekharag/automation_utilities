@@ -61,4 +61,10 @@ public int runCucumberWithRetries(String[] baseArgs, String rerunFilePath, int m
     System.out.println("\n✅ Final Result after " + attempt + " attempt(s): " + (exitCode == 0 ? "PASS" : "FAIL"));
     return exitCode;
 }
+-----------
+System.out.println("🔍 exitCode = " + exitCode);
+System.out.println("🔍 rerun.txt exists = " + Files.exists(rerunPath));
+System.out.println("🔍 rerun.txt size   = " + (Files.exists(rerunPath) ? Files.size(rerunPath) : -1));
+System.out.println("🔍 attempt           = " + attempt);
+System.out.println("🔍 maxAttempts       = " + maxAttempts);
 
