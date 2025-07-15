@@ -30,3 +30,35 @@ public static String[] prepareRerunArgs(String[] originalArgs, String rerunFileP
 
     return rerunArgs.toArray(new String[0]);
 }
+_________________
+public int runCucumberWithRetries(String[] baseArgs, String rerunFilePath, int maxAttempts) throws IOException {
+    ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+    int attempt = 1;
+    int exitCode;
+
+    String[] currentArgs = baseArgs;
+
+    while (true) {
+        System.out.println("\n▶ Attempt " + attempt + ": Running Cucumber...");
+        exitCode = Main.run(currentArgs, classLoader);
+
+        // Check if rerun is required
+        Path rerunPath = Paths.get(rerunFilePath);
+        boolean shouldRetry = exitCode != 0 &&
+                              Files.exists(rerunPath) &&
+                              Files.size(rerunPath) > 0 &&
+                              attempt < maxAttempts;
+
+        if (!shouldRetry) {
+            break; // exit the loop
+        }
+
+        // Prepare rerun args using only failed scenarios
+        currentArgs = prepareRerunArgs(baseArgs, rerunFilePath);
+        attempt++;
+    }
+
+    System.out.println("\n✅ Final Result after " + attempt + " attempt(s): " + (exitCode == 0 ? "PASS" : "FAIL"));
+    return exitCode;
+}
+
