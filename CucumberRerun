@@ -1,0 +1,32 @@
+public static String[] prepareRerunArgs(String[] originalArgs, String rerunFilePath) {
+    List<String> rerunArgs = new ArrayList<>();
+
+    for (int i = 0; i < originalArgs.length; i++) {
+        String arg = originalArgs[i];
+
+        if ("--plugin".equals(arg) && i + 1 < originalArgs.length) {
+            String pluginValue = originalArgs[i + 1];
+            if (pluginValue.startsWith("rerun:")) {
+                i++; // skip this plugin
+                continue;
+            } else {
+                rerunArgs.add(arg);        // --plugin
+                rerunArgs.add(pluginValue); // its value
+                i++;
+                continue;
+            }
+        }
+
+        if (arg.startsWith("classpath:") || arg.endsWith(".feature")) {
+            // skip original features path
+            continue;
+        }
+
+        rerunArgs.add(arg);
+    }
+
+    // Add new feature source from rerun.txt
+    rerunArgs.add("@" + rerunFilePath);
+
+    return rerunArgs.toArray(new String[0]);
+}
