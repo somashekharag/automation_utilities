@@ -1,0 +1,28 @@
+<configuration>
+
+    <!-- File appender that overwrites log file on each run -->
+    <appender name="FILE" class="ch.qos.logback.core.FileAppender">
+        <!-- This is the log file that will be overwritten each time -->
+        <file>logs/itaf.log</file>
+
+        <!-- Append = false means it will overwrite on each run -->
+        <append>false</append>
+
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Optional console output for debugging -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+
+</configuration>
