@@ -41,4 +41,47 @@
 const [rerunEnabled, setRerunEnabled] = useState(false);
 const [rerunAttempts, setRerunAttempts] = useState('1');
 const [attachScreenshots, setAttachScreenshots] = useState(false);
+---------------------
+
+
+{/* Row for Rerun Failed Tests and Rerun Attempts */}
+<div className="flex items-center gap-8">
+  {/* Rerun Failed Tests */}
+  <div className="flex items-center w-1/2">
+    <input
+      type="checkbox"
+      checked={rerunEnabled}
+      onChange={(e) => setRerunEnabled(e.target.checked)}
+      className="mr-2"
+    />
+    <label className="text-lg font-medium">Rerun Failed Tests</label>
+  </div>
+
+  {/* Rerun Attempts Dropdown - only shown if rerunEnabled is true */}
+  {rerunEnabled && (
+    <div className="flex items-center w-1/2">
+      <label className="text-lg font-medium mr-2">Rerun Attempts:</label>
+      <select
+        value={rerunAttempts}
+        onChange={(e) => setRerunAttempts(e.target.value)}
+        className="p-2 border rounded"
+      >
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+      </select>
+    </div>
+  )}
+</div>
+
+{/* Attach Screenshots as Base64 */}
+<div className="flex items-center mt-4">
+  <input
+    type="checkbox"
+    checked={attachScreenshots}
+    onChange={(e) => setAttachScreenshots(e.target.checked)}
+    className="mr-2"
+  />
+  <label className="text-lg font-medium">Attach Screenshots as Base64</label>
+</div>
 
