@@ -1,0 +1,46 @@
+import java.io.*;
+import java.nio.file.*;
+import java.util.List;
+import java.util.zip.*;
+
+public class ReportZipper {
+
+    /**
+     * Zips only selected subfolders from the sourceDirPath and returns the zip file.
+     *
+     * @param sourceDirPath   Root of the reports, like "test-output"
+     * @param foldersToInclude List of folder names (relative to sourceDirPath) to include in zip
+     * @param zipFilePath     Path of output zip file
+     * @return zipped file
+     * @throws IOException if error during zipping
+     */
+    public static File zipSelectedFolders(String sourceDirPath, List<String> foldersToInclude, String zipFilePath) throws IOException {
+        Path basePath = Paths.get(sourceDirPath);
+        Path zipPath = Paths.get(zipFilePath);
+
+        try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zipPath))) {
+            for (String folder : foldersToInclude) {
+                Path folderPath = basePath.resolve(folder);
+                if (!Files.exists(folderPath) || !Files.isDirectory(folderPath)) {
+                    System.out.println("Skipping invalid or non-existent folder: " + folderPath);
+                    continue;
+                }
+
+                Files.walk(folderPath)
+                        .filter(path -> !Files.isDirectory(path))
+                        .forEach(file -> {
+                            try {
+                                ZipEntry zipEntry = new ZipEntry(basePath.relativize(file).toString());
+                                zos.putNextEntry(zipEntry);
+                                Files.copy(file, zos);
+                                zos.closeEntry();
+                            } catch (IOException e) {
+                                throw new RuntimeException("Error adding file to zip: " + file, e);
+                            }
+                        });
+            }
+        }
+
+        return zipPath.toFile();
+    }
+}
