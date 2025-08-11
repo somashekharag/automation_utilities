@@ -1,0 +1,221 @@
+@octane_test_id=1002 @story_id=5678
+Scenario: Verify login functionality
+  Given user navigates to login page
+  When user enters valid credentials
+  Then user should see the dashboard
+------------
+// src/main/java/com/itaf/octane/model/TestRunResult.java
+package com.itaf.octane.model;
+
+public class TestRunResult {
+    public String externalTestId;
+    public String testName;
+    public String packageName;
+    public String className;
+    public String externalRunId;
+    public String status;
+    public long duration;
+    public String started;
+    public String backlogItemId;
+    public String backlogItemType = "story";
+    public String errorType;
+    public String errorMessage;
+    public String stackTrace;
+}
+
+----------
+
+// src/main/java/com/itaf/octane/hooks/OctaneResultHooks.java
+package com.itaf.octane.hooks;
+
+import com.itaf.octane.model.TestRunResult;
+import io.cucumber.java.After;
+import io.cucumber.java.Before;
+import io.cucumber.java.Scenario;
+
+import java.time.Instant;
+import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+public class OctaneResultHooks {
+    private static List<TestRunResult> results = new CopyOnWriteArrayList<>();
+    private Instant startTime;
+
+    @Before
+    public void beforeScenario() {
+        startTime = Instant.now();
+    }
+
+    @After
+    public void afterScenario(Scenario scenario) {
+        TestRunResult result = new TestRunResult();
+
+        // Read tags
+        scenario.getSourceTagNames().forEach(tag -> {
+            if (tag.startsWith("@octane_test_id=")) {
+                result.externalTestId = tag.split("=")[1];
+            }
+            if (tag.startsWith("@story_id=")) {
+                result.backlogItemId = tag.split("=")[1];
+            }
+        });
+
+        result.testName = scenario.getName();
+        result.className = scenario.getUri().toString();
+        result.packageName = "com.itaf.tests";
+        result.externalRunId = UUID.randomUUID().toString();
+        result.status = scenario.isFailed() ? "Failed" : "Passed";
+        result.duration = java.time.Duration.between(startTime, Instant.now()).toMillis();
+        result.started = startTime.toString();
+
+        if (scenario.isFailed() && scenario.getError() != null) {
+            Throwable error = scenario.getError();
+            result.errorType = error.getClass().getSimpleName();
+            result.errorMessage = error.getMessage();
+            result.stackTrace = Arrays.toString(error.getStackTrace());
+        }
+
+        results.add(result);
+    }
+
+    public static List<TestRunResult> getResults() {
+        return results;
+    }
+}
+--------
+// src/main/java/com/itaf/octane/util/OctaneXmlGenerator.java
+package com.itaf.octane.util;
+
+import com.itaf.octane.model.TestRunResult;
+
+import java.io.FileWriter;
+import java.util.List;
+
+public class OctaneXmlGenerator {
+
+    public static void generateXml(List<TestRunResult> results, String filePath) throws Exception {
+        StringBuilder xml = new StringBuilder();
+        xml.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        xml.append("<test_result xmlns=\"http://www.hp.com/pc/alm/octane/schema/test-result\">\n");
+        xml.append("  <build_server_id>ITAF</build_server_id>\n");
+        xml.append("  <build_id>").append(System.currentTimeMillis()).append("</build_id>\n");
+        xml.append("  <job_id>ITAF_Automation</job_id>\n");
+        xml.append("  <start>").append(results.get(0).started).append("</start>\n");
+        xml.append("  <duration>").append(results.stream().mapToLong(r -> r.duration).sum()).append("</duration>\n");
+        xml.append("  <tests>\n");
+
+        for (TestRunResult r : results) {
+            xml.append("    <test>\n");
+            xml.append("      <external_test_id>").append(r.externalTestId).append("</external_test_id>\n");
+            xml.append("      <name>").append(escapeXml(r.testName)).append("</name>\n");
+            xml.append("      <package_name>").append(r.packageName).append("</package_name>\n");
+            xml.append("      <class_name>").append(escapeXml(r.className)).append("</class_name>\n");
+            xml.append("      <runs>\n");
+            xml.append("        <run>\n");
+            xml.append("          <external_run_id>").append(r.externalRunId).append("</external_run_id>\n");
+            xml.append("          <status>").append(r.status).append("</status>\n");
+            xml.append("          <duration>").append(r.duration).append("</duration>\n");
+            xml.append("          <started>").append(r.started).append("</started>\n");
+
+            if (r.backlogItemId != null) {
+                xml.append("          <backlog_items>\n");
+                xml.append("            <backlog_item>\n");
+                xml.append("              <id>").append(r.backlogItemId).append("</id>\n");
+                xml.append("              <type>").append(r.backlogItemType).append("</type>\n");
+                xml.append("            </backlog_item>\n");
+                xml.append("          </backlog_items>\n");
+            }
+
+            if ("Failed".equals(r.status)) {
+                xml.append("          <errors>\n");
+                xml.append("            <error>\n");
+                xml.append("              <error_type>").append(r.errorType).append("</error_type>\n");
+                xml.append("              <message>").append(escapeXml(r.errorMessage)).append("</message>\n");
+                xml.append("              <stack_trace>").append(escapeXml(r.stackTrace)).append("</stack_trace>\n");
+                xml.append("            </error>\n");
+                xml.append("          </errors>\n");
+            }
+
+            xml.append("        </run>\n");
+            xml.append("      </runs>\n");
+            xml.append("    </test>\n");
+        }
+
+        xml.append("  </tests>\n");
+        xml.append("</test_result>\n");
+
+        try (FileWriter writer = new FileWriter(filePath)) {
+            writer.write(xml.toString());
+        }
+    }
+
+    private static String escapeXml(String input) {
+        if (input == null) return "";
+        return input.replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                    .replace("\"", "&quot;")
+                    .replace("'", "&apos;");
+    }
+}
+
+---------
+
+// src/main/java/com/itaf/octane/util/OctaneUploader.java
+package com.itaf.octane.util;
+
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.HttpClients;
+
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Base64;
+
+public class OctaneUploader {
+
+    public static void upload(String octaneUrl, String spaceId, String workspaceId, String username, String password, String filePath) throws Exception {
+        String xml = new String(Files.readAllBytes(Paths.get(filePath)));
+
+        var client = HttpClients.createDefault();
+        HttpPost post = new HttpPost(octaneUrl + "/api/shared_spaces/" + spaceId + "/workspaces/" + workspaceId + "/test-results");
+        post.setHeader("Content-Type", "application/xml");
+        post.setHeader("Authorization", "Basic " + Base64.getEncoder().encodeToString((username + ":" + password).getBytes()));
+        post.setEntity(new StringEntity(xml));
+
+        var response = client.execute(post);
+        System.out.println("Octane upload response: " + response.getStatusLine());
+        client.close();
+    }
+}
+-------
+
+// src/test/java/com/itaf/octane/OctanePublisher.java
+package com.itaf.octane;
+
+import com.itaf.octane.hooks.OctaneResultHooks;
+import com.itaf.octane.util.OctaneUploader;
+import com.itaf.octane.util.OctaneXmlGenerator;
+import org.junit.AfterClass;
+
+public class OctanePublisher {
+
+    @AfterClass
+    public static void afterAll() throws Exception {
+        String resultsFile = "target/octane-test-results.xml";
+        OctaneXmlGenerator.generateXml(OctaneResultHooks.getResults(), resultsFile);
+
+        // Upload to Octane
+        OctaneUploader.upload(
+                "https://your-octane-server", // Base URL
+                "1001",                        // spaceId
+                "2002",                        // workspaceId
+                "your-username",
+                "your-password",
+                resultsFile
+        );
+    }
+}
+
+
+
