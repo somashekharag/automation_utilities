@@ -1,0 +1,87 @@
+public class OctaneUploader {
+
+    private static final String OCTANE_URL = "https://octane.example.com";
+    private static final String CLIENT_ID = "your-client-id";
+    private static final String CLIENT_SECRET = "your-client-secret";
+    private static final String SPACE_ID = "1001";
+    private static final String WORKSPACE_ID = "2002";
+
+    public static void uploadTestResults(String xmlPayload) throws IOException {
+        String token = getAccessToken();
+
+        String uploadUrl = String.format("%s/api/shared_spaces/%s/workspaces/%s/test-results",
+                OCTANE_URL, SPACE_ID, WORKSPACE_ID);
+
+        HttpURLConnection connection = (HttpURLConnection) new URL(uploadUrl).openConnection();
+        connection.setRequestMethod("POST");
+        connection.setRequestProperty("Authorization", "Bearer " + token);
+        connection.setRequestProperty("Content-Type", "application/xml");
+        connection.setDoOutput(true);
+
+        try (OutputStream os = connection.getOutputStream()) {
+            os.write(xmlPayload.getBytes(StandardCharsets.UTF_8));
+        }
+
+        int responseCode = connection.getResponseCode();
+        if (responseCode != 200 && responseCode != 201) {
+            throw new RuntimeException("Failed to upload test results, response code: " + responseCode);
+        }
+
+        System.out.println("Test results uploaded successfully.");
+    }
+
+    private static String getAccessToken() throws IOException {
+        String authUrl = OCTANE_URL + "/authentication/sign_in";
+        HttpURLConnection connection = (HttpURLConnection) new URL(authUrl).openConnection();
+        connection.setRequestMethod("POST");
+        connection.setRequestProperty("Content-Type", "application/json");
+        connection.setDoOutput(true);
+
+        String body = String.format("{\"client_id\":\"%s\",\"client_secret\":\"%s\"}", CLIENT_ID, CLIENT_SECRET);
+
+        try (OutputStream os = connection.getOutputStream()) {
+            os.write(body.getBytes(StandardCharsets.UTF_8));
+        }
+
+        try (InputStream is = connection.getInputStream()) {
+            String jsonResponse = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            // Parse JSON to get token
+            return jsonResponse.split("\"token\"\\s*:\\s*\"")[1].split("\"")[0];
+        }
+    }
+}
+
+------
+<?xml version="1.0" encoding="UTF-8"?>
+<test_result>
+    <build>
+        <id>BUILD-1234</id>
+        <name>ITAF Automation Build</name>
+    </build>
+    <test_runs>
+        <test_run>
+            <name>Login Feature - Valid Login</name>
+            <package>com.itaf.tests.login</package>
+            <class_name>LoginTest</class_name>
+            <external_test_id>MT-1001</external_test_id> <!-- Manual Test ID from Octane -->
+            <external_run_id>RUN-1001</external_run_id>  <!-- Optional unique run ID -->
+            <duration>5000</duration> <!-- in milliseconds -->
+            <result>PASSED</result>
+        </test_run>
+        <test_run>
+            <name>Loan Application - Approve Flow</name>
+            <package>com.itaf.tests.loan</package>
+            <class_name>LoanApprovalTest</class_name>
+            <external_test_id>MT-2001</external_test_id>
+            <external_run_id>RUN-2001</external_run_id>
+            <duration>8300</duration>
+            <result>FAILED</result>
+            <error>
+                <message>Expected approval status but got rejected</message>
+                <type>AssertionError</type>
+                <stack_trace>java.lang.AssertionError: Status mismatch at LoanApprovalTest.java:45</stack_trace>
+            </error>
+        </test_run>
+    </test_runs>
+</test_result>
+
