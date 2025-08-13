@@ -84,4 +84,33 @@ public class OctaneUploader {
         </test_run>
     </test_runs>
 </test_result>
+_________________
 
+<test_result>
+    <test_runs>
+        <test_run>
+            <!-- Test Name -->
+            <name>Verify Loan Approval Workflow</name>
+
+            <!-- Status -->
+            <status>Passed</status>
+
+            <!-- Duration in milliseconds -->
+            <duration>1200</duration>
+
+            <!-- Link to backlog item (user story) -->
+            <backlog_items>
+                <backlog_item>
+                    <id>1234</id> <!-- User Story ID -->
+                </backlog_item>
+            </backlog_items>
+
+            <!-- Link to product area (application module) -->
+            <product_areas>
+                <product_area>
+                    <id>5678</id> <!-- Application Module ID -->
+                </product_area>
+            </product_areas>
+        </test_run>
+    </test_runs>
+</test_result>
