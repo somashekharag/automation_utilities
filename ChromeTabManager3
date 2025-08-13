@@ -1,0 +1,29 @@
+import java.awt.*;
+import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+
+public class ChromeTabManager {
+
+    public void openOrFocusTab(String url) throws IOException, URISyntaxException {
+        if (!focusExistingChromeTab(url)) {
+            // If tab not found, open new one
+            Runtime.getRuntime().exec(new String[]{
+                "cmd", "/c", "start chrome --new-tab " + url
+            });
+        }
+    }
+
+    private boolean focusExistingChromeTab(String url) {
+        try {
+            if (Desktop.isDesktopSupported()) {
+                Desktop desktop = Desktop.getDesktop();
+                desktop.browse(new URI(url)); // opens & focuses tab if possible
+                return true;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+}
