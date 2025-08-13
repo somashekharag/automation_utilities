@@ -1,1 +1,132 @@
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.hc.client5.http.fluent.Request;
+import org.apache.hc.core5.http.HttpStatus;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.WebSocket;
+import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+
+public class ChromeTabManager {
+
+    private static final String DEBUG_URL = "http://localhost:9222/json";
+    private static final String RUNNER_PAGE_URL = "http://localhost:3000/runner"; // <-- change to your page URL
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    public static void main(String[] args) throws Exception {
+        ChromeTabManager manager = new ChromeTabManager();
+        manager.focusOrOpenRunnerPage();
+    }
+
+    public void focusOrOpenRunnerPage() throws Exception {
+        JsonNode tabs = getAllTabs();
+
+        String targetId = null;
+        String webSocketDebuggerUrl = null;
+
+        // Find existing runner page tab
+        for (JsonNode tab : tabs) {
+            String url = tab.get("url").asText();
+            if (url.startsWith(RUNNER_PAGE_URL)) {
+                targetId = tab.get("id").asText();
+                webSocketDebuggerUrl = tab.get("webSocketDebuggerUrl").asText();
+                break;
+            }
+        }
+
+        if (targetId != null && webSocketDebuggerUrl != null) {
+            // Found existing tab → focus + bring to front
+            System.out.println("Found existing tab: " + targetId);
+            activateAndBringToFront(webSocketDebuggerUrl, targetId);
+        } else {
+            // Open new tab
+            System.out.println("Runner page not found → Opening new tab");
+            openNewTab();
+        }
+    }
+
+    private JsonNode getAllTabs() throws IOException {
+        String json = Request.get(DEBUG_URL)
+                .connectTimeout(2000)
+                .execute()
+                .returnContent()
+                .asString();
+        return MAPPER.readTree(json);
+    }
+
+    private void activateAndBringToFront(String webSocketDebuggerUrl, String targetId) throws Exception {
+        WebSocketClient client = new WebSocketClient(webSocketDebuggerUrl);
+
+        // Activate the tab
+        client.send("{ \"id\": 1, \"method\": \"Target.activateTarget\", \"params\": { \"targetId\": \"" + targetId + "\" } }");
+
+        // Bring tab to front
+        client.send("{ \"id\": 2, \"method\": \"Page.bringToFront\" }");
+
+        Thread.sleep(500); // Small delay to ensure action is applied
+        client.close();
+    }
+
+    private void openNewTab() throws IOException {
+        int status = Request.get(DEBUG_URL + "/new?" + RUNNER_PAGE_URL)
+                .execute()
+                .returnResponse()
+                .getCode();
+
+        if (status == HttpStatus.SC_OK) {
+            System.out.println("New Runner Page tab opened successfully.");
+        } else {
+            System.err.println("Failed to open new tab, HTTP Status: " + status);
+        }
+    }
+
+    static class WebSocketClient implements WebSocket.Listener {
+        private final WebSocket webSocket;
+        private final CompletableFuture<Void> closeFuture = new CompletableFuture<>();
+
+        public WebSocketClient(String wsUrl) throws Exception {
+            HttpClient client = HttpClient.newHttpClient();
+            this.webSocket = client.newWebSocketBuilder()
+                    .connectTimeout(Duration.ofSeconds(5))
+                    .buildAsync(URI.create(wsUrl), this)
+                    .join();
+        }
+
+        public void send(String message) {
+            webSocket.sendText(message, true);
+        }
+
+        public void close() {
+            webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done");
+        }
+
+        @Override
+        public void onOpen(WebSocket webSocket) {
+            System.out.println("Connected to Chrome WebSocket");
+            WebSocket.Listener.super.onOpen(webSocket);
+        }
+
+        @Override
+        public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+            System.out.println("Received: " + data);
+            return WebSocket.Listener.super.onText(webSocket, data, last);
+        }
+
+        @Override
+        public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+            closeFuture.complete(null);
+            return WebSocket.Listener.super.onClose(webSocket, statusCode, reason);
+        }
+
+        @Override
+        public void onError(WebSocket webSocket, Throwable error) {
+            error.printStackTrace();
+            closeFuture.completeExceptionally(error);
+        }
+    }
+}
