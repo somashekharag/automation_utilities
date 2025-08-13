@@ -1,29 +1,89 @@
-import java.awt.*;
-import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 public class ChromeTabManager {
 
-    public void openOrFocusTab(String url) throws IOException, URISyntaxException {
-        if (!focusExistingChromeTab(url)) {
-            // If tab not found, open new one
-            Runtime.getRuntime().exec(new String[]{
-                "cmd", "/c", "start chrome --new-tab " + url
-            });
+    private static final String DEBUG_URL = "http://localhost:9222/json";
+
+    public static void main(String[] args) throws Exception {
+        // 1. Start Chrome in debug mode if not already running
+        startChromeDebug();
+
+        // 2. Wait a little for Chrome to be ready
+        Thread.sleep(2000);
+
+        // 3. Check if our runner page tab already exists
+        String runnerPageUrl = "http://localhost:8080";
+        String tabId = findTabId(runnerPageUrl);
+
+        if (tabId != null) {
+            System.out.println("Tab already exists, refreshing...");
+            refreshTab(tabId);
+        } else {
+            System.out.println("Opening new tab...");
+            openNewTab(runnerPageUrl);
         }
+
+        // 4. Bring Chrome window to the front
+        bringChromeToFront();
     }
 
-    private boolean focusExistingChromeTab(String url) {
-        try {
-            if (Desktop.isDesktopSupported()) {
-                Desktop desktop = Desktop.getDesktop();
-                desktop.browse(new URI(url)); // opens & focuses tab if possible
-                return true;
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
+    private static void startChromeDebug() throws Exception {
+        // Run Chrome in remote debugging mode
+        Runtime.getRuntime().exec(new String[]{
+                "cmd", "/c", "start", "chrome",
+                "--remote-debugging-port=9222",
+                "--user-data-dir=C:/ChromeDebugProfile"
+        });
+    }
+
+    private static String findTabId(String urlContains) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(DEBUG_URL).openConnection();
+        conn.setRequestMethod("GET");
+
+        BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+        String line, json = "";
+        while ((line = br.readLine()) != null) {
+            json += line;
         }
-        return false;
+        br.close();
+
+        if (json.contains(urlContains)) {
+            // crude way to find tabId without extra libs
+            int idx = json.indexOf("id");
+            if (idx != -1) {
+                return json.substring(idx + 5, json.indexOf("\"", idx + 5));
+            }
+        }
+        return null;
+    }
+
+    private static void refreshTab(String tabId) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL("http://localhost:9222/json/reload/" + tabId).openConnection();
+        conn.setRequestMethod("GET");
+        conn.getInputStream().close();
+    }
+
+    private static void openNewTab(String url) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(DEBUG_URL + "/new?" + url).openConnection();
+        conn.setRequestMethod("GET");
+        conn.getInputStream().close();
+    }
+
+    private static void bringChromeToFront() throws Exception {
+        // Uses Windows PowerShell to bring Chrome to front
+        String psCommand =
+                "powershell -command \"Add-Type -AssemblyName System.Windows.Forms;" +
+                "Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;" +
+                "public class Win { [DllImport(\\\"user32.dll\\\")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);" +
+                "[DllImport(\\\"user32.dll\\\")] public static extern bool SetForegroundWindow(IntPtr hWnd); }';" +
+                "$chrome = Get-Process chrome | Select-Object -First 1;" +
+                "[Win]::ShowWindowAsync($chrome.MainWindowHandle, 3);" +
+                "[Win]::SetForegroundWindow($chrome.MainWindowHandle)\"";
+
+        Runtime.getRuntime().exec(psCommand);
     }
 }
