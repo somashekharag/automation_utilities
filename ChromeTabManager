@@ -1,0 +1,110 @@
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.java_websocket.client.WebSocketClient;
+import org.java_websocket.handshake.ServerHandshake;
+
+import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.URL;
+
+public class ChromeTabManager {
+
+    private static final String CHROME_DEBUG_URL = "http://localhost:9222/json";
+    private static final String RUNNER_URL = "http://localhost:8080/runner";
+    private static final String USER_DATA_DIR = "C:\\ChromeDevSession"; // change as needed
+
+    public static void openOrRefreshRunner() throws Exception {
+        if (!isChromeDebugRunning()) {
+            startChromeDebug();
+            Thread.sleep(2000); // Give Chrome time to start
+        }
+
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode tabs = mapper.readTree(new URL(CHROME_DEBUG_URL));
+
+        String wsUrl = null;
+
+        // Find existing runner tab
+        for (JsonNode tab : tabs) {
+            String url = tab.get("url").asText();
+            if (url.startsWith(RUNNER_URL)) {
+                wsUrl = tab.get("webSocketDebuggerUrl").asText();
+                break;
+            }
+        }
+
+        if (wsUrl != null) {
+            // Refresh and bring to front
+            sendDevToolsCommand(wsUrl, "{\"method\":\"Page.reload\"}");
+            sendDevToolsCommand(wsUrl, "{\"method\":\"Page.bringToFront\"}");
+        } else {
+            // Open a new runner tab
+            HttpURLConnection conn = (HttpURLConnection)
+                    new URL(CHROME_DEBUG_URL + "/new?" + RUNNER_URL).openConnection();
+            conn.getInputStream().close();
+        }
+    }
+
+    private static boolean isChromeDebugRunning() {
+        try {
+            new URL(CHROME_DEBUG_URL).openStream().close();
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static void startChromeDebug() throws IOException {
+        String cmd = String.format(
+                "cmd /c start chrome --remote-debugging-port=9222 --user-data-dir=\"%s\"",
+                USER_DATA_DIR
+        );
+        Runtime.getRuntime().exec(cmd);
+    }
+
+    private static void sendDevToolsCommand(String wsUrl, String message) throws Exception {
+        WebSocketClient client = new WebSocketClient(new URI(wsUrl)) {
+            @Override
+            public void onOpen(ServerHandshake handsh) {
+                send(message);
+                close();
+            }
+            @Override public void onMessage(String msg) {}
+            @Override public void onClose(int code, String reason, boolean remote) {}
+            @Override public void onError(Exception ex) { ex.printStackTrace(); }
+        };
+        client.connectBlocking();
+    }
+}
+----
+<dependency>
+    <groupId>org.java-websocket</groupId>
+    <artifactId>Java-WebSocket</artifactId>
+    <version>1.5.6</version>
+</dependency>
+
+<dependency>
+    <groupId>com.fasterxml.jackson.core</groupId>
+    <artifactId>jackson-databind</artifactId>
+    <version>2.17.0</version>
+</dependency>
+-------'
+import jakarta.annotation.PostConstruct;
+
+@SpringBootApplication
+public class ItafApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(ItafApplication.class, args);
+    }
+
+    @PostConstruct
+    public void openRunnerTab() {
+        try {
+            ChromeTabManager.openOrRefreshRunner();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
