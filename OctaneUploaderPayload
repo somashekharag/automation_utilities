@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<test_result xmlns="http://www.hp.com/alm/test-result">
+    <build>
+        <name>Build-123</name>
+    </build>
+    <test>
+        <name>Login Test</name>
+        <external_report_url>http://jenkins/job/123</external_report_url>
+        <product_area>
+            <id>2001</id> <!-- Application Module (Product Area) ID -->
+            <type>product_area</type>
+        </product_area>
+        <backlog_items>
+            <backlog_item>
+                <id>3005</id> <!-- Backlog Item ID -->
+                <type>work_item</type>
+            </backlog_item>
+        </backlog_items>
+        <run>
+            <duration>15</duration>
+            <status>Passed</status>
+        </run>
+    </test>
+</test_result>
