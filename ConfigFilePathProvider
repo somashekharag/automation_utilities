@@ -1,0 +1,29 @@
+import java.io.*;
+import java.nio.file.*;
+
+public class OctanePropertiesPathProvider {
+
+    public static String getOctanePropertiesPath() {
+        try (InputStream in = OctanePropertiesPathProvider.class
+                .getClassLoader()
+                .getResourceAsStream("octane.properties")) {
+
+            if (in == null) {
+                throw new IllegalStateException("octane.properties not found in classpath!");
+            }
+
+            Path tempFile = Files.createTempFile("octane", ".properties");
+            tempFile.toFile().deleteOnExit();
+
+            Files.copy(in, tempFile, StandardCopyOption.REPLACE_EXISTING);
+
+            return tempFile.toAbsolutePath().toString();
+
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to extract octane.properties", e);
+        }
+    }
+}
+--------------
+String path = OctanePropertiesPathProvider.getOctanePropertiesPath();
+thirdPartyUtil.load(path);  // third-party requires file path
