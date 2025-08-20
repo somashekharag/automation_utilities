@@ -1,0 +1,157 @@
+package com.itaf.automation.reporting;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+
+import io.cucumber.java.Scenario;
+
+import java.io.File;
+import java.util.Collection;
+import java.util.Optional;
+
+public class CustomXmlReportGenerator {
+
+    private static Document document;
+    private static Element rootElement;
+    private static Element testRunsElement;
+
+    // Static init block
+    static {
+        try {
+            DocumentBuilderFactory docFactory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder docBuilder = docFactory.newDocumentBuilder();
+            document = docBuilder.newDocument();
+
+            // root <test_result>
+            rootElement = document.createElement("test_result");
+            document.appendChild(rootElement);
+
+            // child <test_runs> (empty for now)
+            testRunsElement = document.createElement("test_runs");
+            rootElement.appendChild(testRunsElement);
+
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize XML report generator", e);
+        }
+    }
+
+    /**
+     * Set suite + release details at the start of the test suite.
+     */
+    public static synchronized void setSuiteDetails(String suiteId, String externalRunId, String releaseName) {
+        if (suiteId != null && externalRunId != null) {
+            Element suiteRef = document.createElement("suite_ref");
+            suiteRef.setAttribute("id", suiteId);
+            suiteRef.setAttribute("external_run_id", externalRunId);
+            // insert before <test_runs>
+            rootElement.insertBefore(suiteRef, testRunsElement);
+        }
+
+        if (releaseName != null) {
+            Element release = document.createElement("release");
+            release.setAttribute("name", releaseName);
+            // insert before <test_runs>
+            rootElement.insertBefore(release, testRunsElement);
+        }
+    }
+
+    /**
+     * Add scenario result under <test_runs>
+     */
+    public static synchronized void addScenario(Scenario scenario, long durationMs) {
+        try {
+            String module = extractModule(scenario.getSourceTagNames());
+            String scenarioName = scenario.getName();
+            String className = module;
+            String status = scenario.isFailed() ? "Failed" : "Passed";
+            String started = String.valueOf(System.currentTimeMillis());
+
+            Element testRun = document.createElement("test_run");
+            testRun.setAttribute("module", "/" + module);
+            testRun.setAttribute("package", "com.itaf.automation");
+            testRun.setAttribute("class", className);
+            testRun.setAttribute("name", scenarioName);
+            testRun.setAttribute("duration", String.valueOf(durationMs / 1000));
+            testRun.setAttribute("status", status);
+            testRun.setAttribute("started", started);
+
+            testRunsElement.appendChild(testRun);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static String extractModule(Collection<String> tags) {
+        Optional<String> moduleTag = tags.stream()
+                .filter(t -> t.startsWith("@module_"))
+                .findFirst();
+        return moduleTag.map(tag -> tag.replace("@module_", "")).orElse("defaultModule");
+    }
+
+    /**
+     * Write XML report file
+     */
+    public static synchronized void writeXmlReport(String outputPath) {
+        try {
+            TransformerFactory transformerFactory = TransformerFactory.newInstance();
+            Transformer transformer = transformerFactory.newTransformer();
+            transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+            transformer.setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "no");
+            transformer.setOutputProperty(OutputKeys.METHOD, "xml");
+            transformer.setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "2");
+
+            DOMSource source = new DOMSource(document);
+            StreamResult result = new StreamResult(new File(outputPath));
+            transformer.transform(source, result);
+
+            System.out.println("✅ Custom XML report generated at: " + outputPath);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to write XML report", e);
+        }
+    }
+}
+---------
+package com.itaf.automation.hooks;
+
+import com.itaf.automation.reporting.CustomXmlReportGenerator;
+import io.cucumber.java.*;
+
+public class Hooks {
+
+    private long startTime;
+
+    @BeforeAll
+    public static void beforeAll() {
+        // You can set these values from env vars or config
+        String suiteId = "3001";
+        String externalRunId = "regression Q01";
+        String releaseName = "_default_";
+
+        CustomXmlReportGenerator.setSuiteDetails(suiteId, externalRunId, releaseName);
+    }
+
+    @Before
+    public void beforeScenario(Scenario scenario) {
+        startTime = System.currentTimeMillis();
+    }
+
+    @After
+    public void afterScenario(Scenario scenario) {
+        long duration = System.currentTimeMillis() - startTime;
+        CustomXmlReportGenerator.addScenario(scenario, duration);
+    }
+
+    @AfterAll
+    public static void afterAll() {
+        CustomXmlReportGenerator.writeXmlReport("target/custom-report.xml");
+    }
+}
