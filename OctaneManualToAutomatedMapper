@@ -1,1 +1,69 @@
 
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+public class ManualToAutomatedMapper {
+
+    // Regex to match 6 digit number at the end of scenario name
+    private static final Pattern MANUAL_ID_PATTERN = Pattern.compile(".*?(\\d{6})$");
+
+    public static Map<String, List<String>> mapManualToAutomatedTests(List<Map<String, String>> input) {
+        if (input == null || input.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        return input.stream()
+                .filter(m -> hasValidManualId(m.get("scenarioName")))
+                .collect(Collectors.groupingBy(
+                        m -> extractManualId(m.get("scenarioName")),
+                        Collectors.mapping(m -> m.get("id"), Collectors.toList())
+                ));
+    }
+
+    private static boolean hasValidManualId(String scenarioName) {
+        if (scenarioName == null) return false;
+        Matcher matcher = MANUAL_ID_PATTERN.matcher(scenarioName);
+        return matcher.matches();
+    }
+
+    private static String extractManualId(String scenarioName) {
+        Matcher matcher = MANUAL_ID_PATTERN.matcher(scenarioName);
+        if (matcher.matches()) {
+            return matcher.group(1);
+        }
+        return null;
+    }
+
+    // Example usage
+    public static void main(String[] args) {
+        List<Map<String, String>> input = new ArrayList<>();
+
+        Map<String, String> m1 = new HashMap<>();
+        m1.put("id", "1001");
+        m1.put("scenarioName", "Login with valid credentials_123456");
+        input.add(m1);
+
+        Map<String, String> m2 = new HashMap<>();
+        m2.put("id", "1002");
+        m2.put("scenarioName", "Login with invalid credentials_123456");
+        input.add(m2);
+
+        Map<String, String> m3 = new HashMap<>();
+        m3.put("id", "1003");
+        m3.put("scenarioName", "Place order_987654");
+        input.add(m3);
+
+        Map<String, String> m4 = new HashMap<>();
+        m4.put("id", "1004");
+        m4.put("scenarioName", "Scenario without manual id"); // should be ignored
+        input.add(m4);
+
+        Map<String, List<String>> result = mapManualToAutomatedTests(input);
+
+        // Print the final mapping
+        result.forEach((manualId, automatedIds) -> 
+            System.out.println("ManualId: " + manualId + " -> AutomatedTests: " + automatedIds));
+    }
+}
