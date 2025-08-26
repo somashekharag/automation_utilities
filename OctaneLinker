@@ -1,1 +1,78 @@
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.http.*;
+import org.springframework.web.client.RestTemplate;
 
+import java.util.*;
+
+public class OctaneLinker {
+
+    private final String baseUrl;
+    private final String sharedSpaceId;
+    private final String workspaceId;
+    private final RestTemplate restTemplate;
+    private final HttpHeaders headers;
+
+    public OctaneLinker(String baseUrl, String sharedSpaceId, String workspaceId, String lwSsoCookieKey) {
+        this.baseUrl = baseUrl;
+        this.sharedSpaceId = sharedSpaceId;
+        this.workspaceId = workspaceId;
+        this.restTemplate = new RestTemplate();
+
+        headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.add("Cookie", "LWSSO_COOKIE_KEY=" + lwSsoCookieKey); // authentication cookie
+    }
+
+    public void linkManualToAutomated(Map<String, List<String>> mapping) {
+        mapping.forEach((manualId, automatedIds) -> {
+            try {
+                Map<String, Object> payload = new HashMap<>();
+                List<Map<String, Object>> dataList = new ArrayList<>();
+
+                Map<String, Object> manualTest = new HashMap<>();
+                manualTest.put("id", manualId);
+                manualTest.put("type", "manual_test");
+
+                Map<String, Object> relationships = new HashMap<>();
+                List<Map<String, String>> autoTests = new ArrayList<>();
+                for (String autoId : automatedIds) {
+                    autoTests.add(Map.of("id", autoId, "type", "automated_test"));
+                }
+                relationships.put("automated_tests", Map.of("data", autoTests));
+                manualTest.put("relationships", relationships);
+
+                dataList.add(manualTest);
+                payload.put("data", dataList);
+
+                String url = String.format("%s/api/shared_spaces/%s/workspaces/%s/manual_tests",
+                        baseUrl, sharedSpaceId, workspaceId);
+
+                HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
+
+                ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.PUT, entity, String.class);
+
+                System.out.println("Linked Manual Test " + manualId + " with Automated Tests " + automatedIds);
+                System.out.println("Response: " + response.getStatusCode());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+    }
+
+    public static void main(String[] args) {
+        // Example usage
+        String baseUrl = "https://your.octane.server";
+        String sharedSpaceId = "1001";
+        String workspaceId = "2002";
+        String lwSsoCookieKey = "your_auth_token";
+
+        OctaneLinker linker = new OctaneLinker(baseUrl, sharedSpaceId, workspaceId, lwSsoCookieKey);
+
+        // Example result from your previous utility
+        Map<String, List<String>> result = new HashMap<>();
+        result.put("123456", Arrays.asList("1001", "1002"));
+        result.put("987654", Collections.singletonList("1003"));
+
+        linker.linkManualToAutomated(result);
+    }
+}
