@@ -1,0 +1,88 @@
+<configuration>
+    <!-- Console appender for normal logs -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Console appender for Splunk logs (structured JSON) -->
+    <appender name="SPLUNK" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <timestamp/>
+                <logLevel/>
+                <loggerName/>
+                <message/>
+                <mdc/>  <!-- This captures key-value pairs you pass via MDC -->
+            </providers>
+        </encoder>
+    </appender>
+
+    <!-- Root logger (normal logs only) -->
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+
+    <!-- Dedicated Splunk logger -->
+    <logger name="splunkLogger" level="INFO" additivity="false">
+        <appender-ref ref="SPLUNK"/>
+    </logger>
+</configuration>
+
+
+
+----------
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import org.springframework.stereotype.Component;
+
+import java.util.Map;
+
+@Component
+public class SplunkStructuredLogger {
+
+    private static final Logger splunkLogger = LoggerFactory.getLogger("splunkLogger");
+
+    public void logEvent(String eventName, Map<String, Object> fields) {
+        try {
+            MDC.put("event", eventName);
+            fields.forEach((k, v) -> MDC.put(k, String.valueOf(v)));
+
+            splunkLogger.info(eventName); // message field also logged
+        } finally {
+            MDC.clear(); // cleanup to avoid leaking MDC values
+        }
+    }
+}
+-----import org.springframework.boot.CommandLineRunner;
+import org.springframework.stereotype.Component;
+
+import java.util.Map;
+
+@Component
+public class DemoRunner implements CommandLineRunner {
+
+    private final SplunkStructuredLogger splunkLogger;
+
+    public DemoRunner(SplunkStructuredLogger splunkLogger) {
+        this.splunkLogger = splunkLogger;
+    }
+
+    @Override
+    public void run(String... args) {
+        // normal log
+        System.out.println("Starting business process...");
+
+        // structured log to Splunk
+        splunkLogger.logEvent("OrderPlaced", Map.of(
+                "orderId", "12345",
+                "userId", "U001",
+                "amount", 250.0,
+                "currency", "INR",
+                "status", "success"
+        ));
+    }
+}
+
