@@ -1,0 +1,56 @@
+package com.itaf.core.logging;
+
+import io.restassured.RestAssured;
+import io.restassured.response.Response;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class SplunkLogger {
+    private static final Logger log = LoggerFactory.getLogger(SplunkLogger.class);
+
+    private final String splunkUrl;
+    private final String token;
+
+    public SplunkLogger(String splunkUrl, String token) {
+        this.splunkUrl = splunkUrl;
+        this.token = token;
+    }
+
+    public void logEvent(String message, String runId, String stage) {
+        try {
+            String payload = "{ \"event\": { " +
+                    "\"runId\": \"" + runId + "\"," +
+                    "\"stage\": \"" + stage + "\"," +
+                    "\"message\": \"" + message + "\"" +
+                    " } }";
+
+            Response response = RestAssured
+                    .given()
+                    .header("Authorization", "Splunk " + token)
+                    .contentType("application/json")
+                    .body(payload)
+                    .post(splunkUrl + "/services/collector/event");
+
+            if (response.getStatusCode() == 200) {
+                log.info("Splunk log sent successfully: {}", message);
+            } else {
+                log.error("Failed to send Splunk log. Status: {}, Response: {}",
+                        response.getStatusCode(), response.getBody().asString());
+            }
+        } catch (Exception e) {
+            log.error("Error while sending log to Splunk", e);
+        }
+    }
+}publisher.registerHandlerFor(TestRunStarted.class, event -> {
+    splunkLogger.logEvent("Execution started", "run-" + System.currentTimeMillis(), "START");
+});
+
+publisher.registerHandlerFor(TestRunFinished.class, event -> {
+    String summary = "Total:" + event.getResult().getCounts().getTotal() +
+                     " Passed:" + event.getResult().getCounts().getPassed() +
+                     " Failed:" + event.getResult().getCounts().getFailed();
+    splunkLogger.logEvent("Execution finished. " + summary,
+            "run-" + System.currentTimeMillis(), "END");
+});
+
+_______
