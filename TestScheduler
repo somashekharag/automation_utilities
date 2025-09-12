@@ -1,0 +1,87 @@
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.*;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.Collections;
+import java.util.Map;
+
+@Component
+public class ItafTestScheduler {
+
+    private final RestTemplate restTemplate = new RestTemplate();
+
+    // Inject base url from application.properties/yml
+    @Value("${itaf.base.url}")
+    private String baseUrl;
+
+    // Run every day at 5:00 PM IST
+    @Scheduled(cron = "0 0 17 * * *", zone = "Asia/Kolkata")
+    public void scheduleTestRun() throws InterruptedException {
+        System.out.println("Scheduler started at 5:00 PM IST...");
+
+        // 1. Call /setenv
+        setEnvironment();
+
+        // 2. Call /run-tests
+        String jobId = runTests();
+
+        // 3. Poll until job completes
+        pollUntilCompleted(jobId);
+
+        System.out.println("ITAF job " + jobId + " completed.");
+    }
+
+    private void setEnvironment() {
+        String url = baseUrl + "/setenv";
+
+        // Example TestRunOptions payload
+        Map<String, Object> testRunOptions = Map.of(
+                "environment", "QA",
+                "browser", "chrome",
+                "buildId", "20250912-001"
+        );
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(testRunOptions, headers);
+        restTemplate.postForObject(url, entity, String.class);
+
+        System.out.println("Environment set via /setenv");
+    }
+
+    private String runTests() {
+        String url = baseUrl + "/run-tests";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        // If /run-tests requires options, send them, else empty map
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(Collections.emptyMap(), headers);
+
+        Map<?, ?> response = restTemplate.postForObject(url, entity, Map.class);
+        String jobId = response.get("jobId").toString();
+
+        System.out.println("Triggered /run-tests, jobId = " + jobId);
+        return jobId;
+    }
+
+    private void pollUntilCompleted(String jobId) throws InterruptedException {
+        String url = baseUrl + "/jobs/" + jobId;
+
+        while (true) {
+            Map<?, ?> response = restTemplate.getForObject(url, Map.class);
+            String status = response.get("status").toString();
+
+            System.out.println("Job " + jobId + " status: " + status);
+
+            if ("completed".equalsIgnoreCase(status)) {
+                break;
+            }
+
+            Thread.sleep(10_000); // poll every 10 seconds
+        }
+    }
+}
