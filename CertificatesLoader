@@ -1,0 +1,76 @@
+package com.itaf.config;
+
+import org.springframework.context.annotation.Configuration;
+
+import javax.annotation.PostConstruct;
+import javax.net.ssl.*;
+import java.io.InputStream;
+import java.nio.file.*;
+import java.security.KeyStore;
+import java.security.SecureRandom;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.util.Objects;
+import java.util.stream.Stream;
+
+@Configuration
+public class CertificateConfig {
+
+    @PostConstruct
+    public void init() {
+        try {
+            if (isRunningOnPCF()) {
+                System.out.println("PCF detected - using pre-installed certificates.");
+                return; // Skip custom cert loading
+            }
+
+            System.out.println("Loading custom certificates for local execution...");
+
+            // Create an empty in-memory keystore
+            KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+            ks.load(null, null);
+
+            // Load all certs from resources/certificates/
+            try (Stream<Path> paths = Files.walk(Paths.get(
+                    Objects.requireNonNull(
+                            getClass().getClassLoader().getResource("certificates")).toURI()
+            ))) {
+                paths.filter(Files::isRegularFile).forEach(path -> {
+                    try (InputStream certStream = Files.newInputStream(path)) {
+                        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+                        X509Certificate cert = (X509Certificate) cf.generateCertificate(certStream);
+
+                        String alias = path.getFileName().toString();
+                        ks.setCertificateEntry(alias, cert);
+
+                        System.out.println("Loaded certificate: " + alias);
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to load certificate: " + path, e);
+                    }
+                });
+            }
+
+            // Init TrustManager
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(
+                    TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(ks);
+
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, tmf.getTrustManagers(), new SecureRandom());
+
+            // Set as default
+            SSLContext.setDefault(sslContext);
+            HttpsURLConnection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());
+
+            System.out.println("Custom certificates successfully loaded into SSL context.");
+
+        } catch (Exception e) {
+            throw new RuntimeException("Error while loading certificates", e);
+        }
+    }
+
+    private boolean isRunningOnPCF() {
+        return System.getenv("VCAP_APPLICATION") != null
+                || System.getenv("VCAP_SERVICES") != null;
+    }
+}
