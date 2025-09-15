@@ -1,0 +1,146 @@
+package com.itaf.config;
+
+import org.springframework.context.annotation.Configuration;
+
+import javax.annotation.PostConstruct;
+import javax.net.ssl.*;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.net.Socket;
+import java.nio.file.*;
+import java.security.KeyStore;
+import java.security.SecureRandom;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.util.*;
+
+@Configuration
+public class CertificateManager {
+
+    // Default servers required for ITAF
+    private static final Map<String, String> DEFAULT_SERVERS = Map.of(
+            "nexus.mycompany.com:443", "nexus",
+            "saucelabs.com:443", "saucelabs",
+            "s3.amazonaws.com:443", "awss3"
+    );
+
+    private static final String CERTS_DIR = "src/main/resources/certificates";
+
+    @PostConstruct
+    public void init() {
+        try {
+            if (isRunningOnPCF()) {
+                System.out.println("PCF detected - using pre-installed certificates.");
+                return;
+            }
+
+            System.out.println("Local execution detected - managing certificates...");
+
+            Path certDir = Paths.get(CERTS_DIR);
+            if (!Files.exists(certDir)) {
+                Files.createDirectories(certDir);
+            }
+
+            // Step 1: Load default servers
+            for (Map.Entry<String, String> entry : DEFAULT_SERVERS.entrySet()) {
+                ensureCertificate(entry.getKey(), entry.getValue(), certDir);
+            }
+
+            // Step 2: Load any custom certificates placed manually into resources/certificates
+            KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+            ks.load(null, null);
+
+            try (DirectoryStream<Path> paths = Files.newDirectoryStream(certDir, "*.{crt,pem}")) {
+                for (Path path : paths) {
+                    try (InputStream certStream = Files.newInputStream(path)) {
+                        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+                        Collection<? extends Certificate> certs = cf.generateCertificates(certStream);
+
+                        int idx = 1;
+                        for (Certificate cert : certs) {
+                            String alias = path.getFileName().toString() + "-" + idx++;
+                            ks.setCertificateEntry(alias, cert);
+                            System.out.println("Loaded certificate: " + alias);
+                        }
+                    }
+                }
+            }
+
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(
+                    TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(ks);
+
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, tmf.getTrustManagers(), new SecureRandom());
+
+            SSLContext.setDefault(sslContext);
+            HttpsURLConnection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());
+
+            System.out.println("Custom SSLContext configured with downloaded + custom certificates.");
+
+        } catch (Exception e) {
+            throw new RuntimeException("Error setting up certificates", e);
+        }
+    }
+
+    private void ensureCertificate(String hostPort, String alias, Path certDir) throws Exception {
+        Path certFile = certDir.resolve(alias + ".crt");
+        if (!Files.exists(certFile)) {
+            System.out.println("Certificate missing for " + hostPort + ", downloading full chain...");
+            downloadCertificateChain(hostPort, certFile.toFile());
+        } else {
+            System.out.println("Found existing certificate: " + certFile.getFileName());
+        }
+    }
+
+    private void downloadCertificateChain(String hostPort, File outputFile) throws Exception {
+        String[] parts = hostPort.split(":");
+        String host = parts[0];
+        int port = Integer.parseInt(parts[1]);
+
+        SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+        try (SSLSocket socket = (SSLSocket) factory.createSocket(host, port)) {
+            socket.startHandshake();
+            SSLSession session = socket.getSession();
+
+            Certificate[] certs = session.getPeerCertificates();
+
+            try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+                for (Certificate cert : certs) {
+                    fos.write(cert.getEncoded());
+                }
+            }
+
+            System.out.println("Saved full certificate chain for " + hostPort + " -> " + outputFile.getName());
+        }
+    }
+
+    private boolean isRunningOnPCF() {
+        return System.getenv("VCAP_APPLICATION") != null
+                || System.getenv("VCAP_SERVICES") != null;
+    }
+
+    /**
+     * API for teams to add custom certs
+     */
+    public static void addCustomCertificate(String host, int port, String alias) {
+        try {
+            Path certDir = Paths.get(CERTS_DIR);
+            if (!Files.exists(certDir)) {
+                Files.createDirectories(certDir);
+            }
+            Path certFile = certDir.resolve(alias + ".crt");
+
+            if (!Files.exists(certFile)) {
+                System.out.println("Downloading custom certificate for " + host + ":" + port);
+                new CertificateManager().downloadCertificateChain(host + ":" + port, certFile.toFile());
+            } else {
+                System.out.println("Custom certificate already exists: " + certFile.getFileName());
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to add custom certificate: " + alias, e);
+        }
+    }
+}
