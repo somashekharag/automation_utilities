@@ -1,0 +1,138 @@
+# QA
+qa.db.url=jdbc:postgresql://qa-db.company.com:5432/qa_db
+qa.db.username=qa_user
+qa.db.password=qa_pass
+qa.db.driver=org.postgresql.Driver
+
+# DEV
+dev.db.url=jdbc:postgresql://dev-db.company.com:5432/dev_db
+dev.db.username=dev_user
+dev.db.password=dev_pass
+dev.db.driver=org.postgresql.Driver
+
+# UAT
+uat.db.url=jdbc:postgresql://uat-db.company.com:5432/uat_db
+uat.db.username=uat_user
+uat.db.password=uat_pass
+uat.db.driver=org.postgresql.Driver
+
+---------package com.itaf.db;
+
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import javax.sql.DataSource;
+import java.io.InputStream;
+import java.util.Properties;
+
+@Configuration
+public class DatabaseConfig {
+
+    private HikariDataSource dataSource;
+
+    @Bean
+    public DataSource dataSource() {
+        String env = TestRunOptions.getEnvironment(); // e.g. "qa", "dev", "uat"
+
+        try (InputStream input = getClass().getClassLoader().getResourceAsStream("db.properties")) {
+            if (input == null) {
+                throw new RuntimeException("db.properties file not found in resources!");
+            }
+
+            Properties props = new Properties();
+            props.load(input);
+
+            String prefix = env.toLowerCase() + ".db.";
+
+            HikariConfig config = new HikariConfig();
+            config.setJdbcUrl(props.getProperty(prefix + "url"));
+            config.setUsername(props.getProperty(prefix + "username"));
+            config.setPassword(props.getProperty(prefix + "password"));
+            config.setDriverClassName(props.getProperty(prefix + "driver"));
+
+            // ✅ Connection pool settings
+            config.setMaximumPoolSize(10);
+            config.setMinimumIdle(2);
+            config.setIdleTimeout(30000);
+            config.setConnectionTimeout(20000);
+            config.setLeakDetectionThreshold(60000);
+
+            this.dataSource = new HikariDataSource(config);
+            return this.dataSource;
+
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to load DB config for env: " + env, e);
+        }
+    }
+
+    @Bean
+    public JdbcTemplate jdbcTemplate(DataSource dataSource) {
+        return new JdbcTemplate(dataSource);
+    }
+
+    /** Gracefully close pool at end of execution */
+    public void closePool() {
+        if (dataSource != null && !dataSource.isClosed()) {
+            dataSource.close();
+            System.out.println("🔒 HikariCP connection pool closed.");
+        }
+    }
+}
+______package com.itaf.db;
+
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+
+@Component
+public class DatabaseUtil {
+
+    private final JdbcTemplate jdbcTemplate;
+
+    public DatabaseUtil(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    /** Run SELECT queries and return results as list of maps */
+    public List<Map<String, Object>> executeQuery(String sql) {
+        return jdbcTemplate.queryForList(sql);
+    }
+
+    /** Run INSERT/UPDATE/DELETE queries */
+    public int executeUpdate(String sql) {
+        return jdbcTemplate.update(sql);
+    }
+}
+--------import com.itaf.db.DatabaseUtil;
+import com.itaf.db.DatabaseConfig;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest
+public class DBTest {
+
+    @Autowired
+    private DatabaseUtil databaseUtil;
+
+    @Autowired
+    private DatabaseConfig dbConfig;
+
+    @Test
+    void testQuery() {
+        var results = databaseUtil.executeQuery("SELECT id, name FROM users LIMIT 3");
+        results.forEach(System.out::println);
+    }
+
+    @AfterAll
+    static void cleanup(@Autowired DatabaseConfig dbConfig) {
+        dbConfig.closePool(); // close HikariCP gracefully
+    }
+}
+------
