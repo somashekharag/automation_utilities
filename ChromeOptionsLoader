@@ -1,0 +1,65 @@
+package com.itaf.core.driver;
+
+import org.openqa.selenium.chrome.ChromeOptions;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Properties;
+
+public class ChromeOptionsLoader {
+
+    private static final String PROPERTIES_FILE = "application.properties";
+    private static final String EXTRA_CHROME_OPTIONS_KEY = "chrome.extra.options";
+
+    public static ChromeOptions getCustomChromeOptions() {
+        ChromeOptions options = new ChromeOptions();
+        Properties props = new Properties();
+
+        try {
+            props.load(ClassLoader.getSystemResourceAsStream(PROPERTIES_FILE));
+            String extraOptions = props.getProperty(EXTRA_CHROME_OPTIONS_KEY);
+
+            if (extraOptions != null && !extraOptions.trim().isEmpty()) {
+                List<String> arguments = Arrays.asList(extraOptions.split(","));
+                for (String arg : arguments) {
+                    options.addArguments(arg.trim());
+                }
+            }
+
+        } catch (IOException e) {
+            System.err.println("Unable to load application.properties for Chrome options: " + e.getMessage());
+        }
+
+        return options;
+    }
+}
+------------
+public class DriverFactory {
+
+    public static WebDriver createLocalDriver() {
+        ChromeOptions baseOptions = new ChromeOptions();
+        baseOptions.addArguments("--start-maximized");
+        baseOptions.addArguments("--disable-notifications");
+        baseOptions.addArguments("--disable-infobars");
+
+        // Load external options from application.properties
+        ChromeOptions externalOptions = ChromeOptionsLoader.getCustomChromeOptions();
+
+        // Merge both sets
+        for (String arg : externalOptions.getArguments()) {
+            baseOptions.addArguments(arg);
+        }
+
+        WebDriver driver = new ChromeDriver(baseOptions);
+        return driver;
+    }
+}
+
+--------------
+# Existing configurations
+browser=chrome
+env=qa
+
+# Additional Chrome options
+chrome.extra.options=--user-data-dir=/path/to/profile,--disable-popup-blocking,--incognito
+---------------
