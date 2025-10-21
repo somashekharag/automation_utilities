@@ -63,3 +63,67 @@ env=qa
 # Additional Chrome options
 chrome.extra.options=--user-data-dir=/path/to/profile,--disable-popup-blocking,--incognito
 ---------------
+package com.itaf.core.driver;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.*;
+
+public class ChromeOptionsLoader {
+
+    private static final String PROPERTIES_FILE = "application.properties";
+    private static final String EXTRA_CHROME_OPTIONS_KEY = "chrome.extra.options";
+
+    public static List<String> getCustomChromeArguments() {
+        List<String> arguments = new ArrayList<>();
+        Properties props = new Properties();
+
+        try (InputStream input = ClassLoader.getSystemResourceAsStream(PROPERTIES_FILE)) {
+            if (input == null) {
+                System.err.println("application.properties not found in classpath.");
+                return arguments;
+            }
+
+            props.load(input);
+            String extraOptions = props.getProperty(EXTRA_CHROME_OPTIONS_KEY);
+
+            if (extraOptions != null && !extraOptions.trim().isEmpty()) {
+                String[] args = extraOptions.split(",");
+                for (String arg : args) {
+                    arguments.add(arg.trim());
+                }
+            }
+
+        } catch (IOException e) {
+            System.err.println("Unable to load Chrome options from application.properties: " + e.getMessage());
+        }
+
+        return arguments;
+    }
+}
+--------
+public class DriverFactory {
+
+    public static WebDriver createLocalDriver() {
+        // Base (default) arguments from ITAF core
+        List<String> baseArgs = new ArrayList<>(Arrays.asList(
+            "--start-maximized",
+            "--disable-notifications",
+            "--disable-infobars"
+        ));
+
+        // Load extra args from properties
+        List<String> extraArgs = ChromeOptionsLoader.getCustomChromeArguments();
+
+        // Merge them
+        baseArgs.addAll(extraArgs);
+
+        // Create ChromeOptions
+        ChromeOptions options = new ChromeOptions();
+        for (String arg : baseArgs) {
+            options.addArguments(arg);
+        }
+
+        return new ChromeDriver(options);
+    }
+}
