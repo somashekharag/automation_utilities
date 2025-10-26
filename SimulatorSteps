@@ -1,0 +1,176 @@
+{
+  "applicationType": {
+    "locator": "//label[contains(text(),'Application Type')]/following::select[1]",
+    "type": "select"
+  },
+  "region": {
+    "locator": "//label[contains(text(),'Region')]/following::select[1]",
+    "type": "select"
+  },
+  "userType": {
+    "locator": "//label[contains(text(),'User Type')]/following::input[1]",
+    "type": "text"
+  },
+  "channel": {
+    "locator": "//label[contains(text(),'Channel')]/following::select[1]",
+    "type": "select"
+  },
+  "theme": {
+    "locator": "//label[contains(text(),'Theme')]/following::input[1]",
+    "type": "text"
+  },
+  "isRetail": {
+    "locator": "//label[contains(text(),'Retail')]/preceding-sibling::input[@type='checkbox']",
+    "type": "checkbox"
+  }
+}
+---------
+package com.itaf.steps;
+
+import io.cucumber.java.en.Given;
+import io.cucumber.datatable.DataTable;
+import org.openqa.selenium.WebDriver;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.itaf.core.DriverFactory;
+import com.itaf.utils.JsonDataReader;
+import com.itaf.utils.WebActions;
+import java.util.HashMap;
+import java.util.Map;
+
+public class MFELaunchSteps {
+
+    @Autowired
+    private DriverFactory driverFactory;
+
+    @Autowired
+    private WebActions webActions;
+
+    private static final String CUSTOMER_JSON = "src/test/resources/testdata/mfe-customer-data.json";
+    private static final String LOCATOR_JSON = "src/test/resources/testdata/mfe-field-locators.json";
+
+    @Given("I launch the MFE application using simulator {string} for customer {string} with below details")
+    public void launchMFE(String simulatorUrl, String customerId, DataTable dataTable) throws Exception {
+
+        WebDriver driver = driverFactory.getDriver();
+        driver.get(simulatorUrl);
+
+        // Load data for the customer
+        Map<String, String> customerData = JsonDataReader.getCustomerData(CUSTOMER_JSON, customerId);
+        Map<String, String> overrideData = new HashMap<>(dataTable.asMap(String.class, String.class));
+
+        // Merge data
+        Map<String, String> finalData = new HashMap<>(customerData);
+        finalData.putAll(overrideData);
+
+        // Load field locator metadata
+        Map<String, Map<String, String>> fieldMeta = JsonDataReader.getFieldMetadata(LOCATOR_JSON);
+
+        // Fill simulator fields
+        for (Map.Entry<String, String> entry : finalData.entrySet()) {
+            String fieldName = entry.getKey();
+            String fieldValue = entry.getValue();
+
+            if (!fieldMeta.containsKey(fieldName)) {
+                System.out.println("⚠️ No locator mapping found for field: " + fieldName);
+                continue;
+            }
+
+            Map<String, String> meta = fieldMeta.get(fieldName);
+            String locator = meta.get("locator");
+            String type = meta.get("type");
+
+            webActions.fillField(locator, type, fieldValue);
+        }
+
+        // Launch the app
+        webActions.clickButton("Launch App");
+        webActions.waitForPageToLoad();
+    }
+}
+-----'
+package com.itaf.utils;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.File;
+import java.util.Map;
+
+public class JsonDataReader {
+
+    public static Map<String, String> getCustomerData(String filePath, String customerId) throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        Map<String, Map<String, String>> allData = mapper.readValue(new File(filePath), Map.class);
+
+        if (!allData.containsKey(customerId)) {
+            throw new RuntimeException("No data found for customer ID: " + customerId);
+        }
+        return allData.get(customerId);
+    }
+
+    public static Map<String, Map<String, String>> getFieldMetadata(String filePath) throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        return mapper.readValue(new File(filePath), Map.class);
+    }
+}
+
+-------
+package com.itaf.utils;
+
+import org.openqa.selenium.By;
+import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.WebElement;
+import org.openqa.selenium.support.ui.Select;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+@Component
+public class WebActions {
+
+    @Autowired
+    private WebDriver driver;
+
+    public void fillField(String locator, String type, String value) {
+        try {
+            WebElement element = driver.findElement(By.xpath(locator));
+
+            switch (type.toLowerCase()) {
+                case "text":
+                    element.clear();
+                    element.sendKeys(value);
+                    break;
+
+                case "select":
+                    Select dropdown = new Select(element);
+                    dropdown.selectByVisibleText(value);
+                    break;
+
+                case "checkbox":
+                    boolean shouldCheck = Boolean.parseBoolean(value);
+                    if (element.isSelected() != shouldCheck) {
+                        element.click();
+                    }
+                    break;
+
+                case "radio":
+                    if (!element.isSelected()) {
+                        element.click();
+                    }
+                    break;
+
+                default:
+                    System.out.println("⚠️ Unsupported field type: " + type);
+            }
+
+        } catch (Exception e) {
+            System.out.println("⚠️ Unable to interact with field [" + locator + "]: " + e.getMessage());
+        }
+    }
+------
+    public void clickButton(String buttonText) {
+        driver.findElement(By.xpath("//button[contains(text(),'" + buttonText + "')]")).click();
+    }
+
+    public void waitForPageToLoad() {
+        // Add wait logic if needed
+    }
+}
+
