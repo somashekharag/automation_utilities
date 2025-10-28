@@ -1,0 +1,85 @@
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Properties;
+
+public class AppConfig {
+
+    private static AppConfig instance;
+    private Properties properties;
+
+    // Define mandatory properties
+    private static final List<String> MANDATORY_PROPERTIES = Arrays.asList(
+        "base.url",
+        "thread.count",
+        "cucumber.tags"
+    );
+
+    // Default environment
+    private static final String DEFAULT_ENV = "qa";
+
+    // Private constructor — only accessible within the class
+    private AppConfig(String environment) throws ConfigurationException {
+        this.properties = loadProperties(environment);
+        validateMandatoryProperties();
+    }
+
+    /**
+     * Returns the singleton instance of AppConfig.
+     * If not initialized, it loads the properties for the given environment.
+     */
+    public static synchronized AppConfig getInstance(String environment) throws ConfigurationException {
+        if (instance == null) {
+            instance = new AppConfig(environment != null ? environment : DEFAULT_ENV);
+        }
+        return instance;
+    }
+
+    /**
+     * Overloaded method — returns the instance with default environment (qa)
+     */
+    public static synchronized AppConfig getInstance() throws ConfigurationException {
+        return getInstance(DEFAULT_ENV);
+    }
+
+    private Properties loadProperties(String environment) throws ConfigurationException {
+        Properties properties = new Properties();
+
+        String envPropertiesFile = String.format("config/%s.properties", environment);
+        try (InputStream input = getClass().getClassLoader().getResourceAsStream(envPropertiesFile)) {
+            if (input != null) {
+                properties.load(input);
+            } else {
+                // Fallback to default config.properties
+                try (InputStream defaultInput = getClass().getClassLoader().getResourceAsStream("config.properties")) {
+                    if (defaultInput != null) {
+                        properties.load(defaultInput);
+                    } else {
+                        throw new ConfigurationException("No configuration file found for environment '" + environment + "'");
+                    }
+                }
+            }
+        } catch (IOException e) {
+            throw new ConfigurationException("Error loading configuration for environment: " + environment, e);
+        }
+
+        return properties;
+    }
+
+    private void validateMandatoryProperties() throws ConfigurationException {
+        for (String propertyName : MANDATORY_PROPERTIES) {
+            if (properties.getProperty(propertyName) == null || properties.getProperty(propertyName).isEmpty()) {
+                throw new ConfigurationException("Mandatory property '" + propertyName + "' is missing");
+            }
+        }
+    }
+
+    public String getProperty(String propertyName) {
+        return properties.getProperty(propertyName);
+    }
+
+    public String getPropertyWithDefault(String propertyName, String defaultValue) {
+        return properties.getProperty(propertyName, defaultValue);
+    }
+}
